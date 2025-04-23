@@ -9,10 +9,21 @@ RUN apt-get update && apt-get install -y \
     libprotobuf-dev \
     protobuf-compiler \
     protobuf-compiler-grpc \
-    pkg-config
+    pkg-config \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
+
+# Clone whisper.cpp
+RUN git clone https://github.com/ggerganov/whisper.cpp.git && \
+    cd whisper.cpp && \
+    make
+
+# Create models directory and download a model
+RUN mkdir -p /app/models
+RUN wget -O /app/models/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 
 # Copy whisper source code
 COPY whisper/ .
@@ -20,13 +31,16 @@ COPY whisper/ .
 # Copy proto files from the root-level proto directory
 COPY proto/ /app/proto/
 
-# Regenerate proto files with the installed protobuf version
+# Generate proto files
 RUN protoc --proto_path=/app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
     --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` /app/proto/whisper.proto
 
 # Build
-RUN mkdir -p build && cd build && cmake .. && make
+RUN mkdir -p build && cd build && \
+    cmake .. && \
+    make
 
-RUN cp build/whisper_server .
+# Create required directory for socket
+RUN mkdir -p /app/sockets && chmod 777 /app/sockets
 
-CMD ["./whisper_server"]
+CMD ["./build/whisper_server"]
