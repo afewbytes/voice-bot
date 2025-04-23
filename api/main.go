@@ -45,7 +45,6 @@ func readWAVFile(path string) ([]byte, error) {
 
 	// Find the data chunk by reading chunks until we find "data"
 	for {
-		// Read chunk header (8 bytes: 4 for ID, 4 for size)
 		var chunkHeader [8]byte
 		_, err := io.ReadFull(file, chunkHeader[:])
 		if err != nil {
@@ -60,7 +59,6 @@ func readWAVFile(path string) ([]byte, error) {
 
 		log.Printf("Found chunk: %s, size: %d bytes", chunkID, chunkSize)
 
-		// If it's a 'fmt ' chunk, extract audio format info
 		if chunkID == "fmt " {
 			var fmtChunk struct {
 				AudioFormat   uint16
@@ -77,7 +75,6 @@ func readWAVFile(path string) ([]byte, error) {
 			log.Printf("WAV format: %d channels, %d Hz, %d bits per sample",
 				fmtChunk.NumChannels, fmtChunk.SampleRate, fmtChunk.BitsPerSample)
 
-			// Skip any extra format bytes
 			if chunkSize > 16 {
 				extraBytes := chunkSize - 16
 				_, err := file.Seek(int64(extraBytes), io.SeekCurrent)
@@ -88,7 +85,6 @@ func readWAVFile(path string) ([]byte, error) {
 			continue
 		}
 
-		// If it's the 'data' chunk, read the audio data
 		if chunkID == "data" {
 			data := make([]byte, chunkSize)
 			_, err := io.ReadFull(file, data)
@@ -98,7 +94,7 @@ func readWAVFile(path string) ([]byte, error) {
 			return data, nil
 		}
 
-		// Skip this chunk if it's not 'data'
+		// Skip unknown chunk
 		_, err = file.Seek(int64(chunkSize), io.SeekCurrent)
 		if err != nil {
 			return nil, fmt.Errorf("could not skip chunk: %v", err)
@@ -106,10 +102,10 @@ func readWAVFile(path string) ([]byte, error) {
 	}
 }
 
-// streamAudioToWhisper streams audio data to the whisper service
-func streamAudioToWhisper(client pb.WhisperServiceClient, audioData []byte, chunkSize int) (string, error) {
-	// Create a new stream
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+// streamAudioToWhisper streams audio data to the whisper service using server-streaming
+func streamAudioToWhisper(client pb.WhisperServiceClient, audioData []byte) (string, error) {
+	// Increased timeout to allow more processing time
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
 	stream, err := client.StreamAudio(ctx)
@@ -117,50 +113,88 @@ func streamAudioToWhisper(client pb.WhisperServiceClient, audioData []byte, chun
 		return "", fmt.Errorf("error creating stream: %v", err)
 	}
 
-	// Send audio in chunks
-	for i := 0; i < len(audioData); i += chunkSize {
-		end := i + chunkSize
+	// Match server's step size for better processing
+	const samplingRate = 16000
+	const bytesPerSample = 2
+	const chunkSec = 5.0 // Changed from 8.0 to 5.0 to match server step size
+	chunkBytes := int(chunkSec * float64(samplingRate) * float64(bytesPerSample))
+
+	log.Printf("Using chunk size of %d bytes (%.2f seconds)", chunkBytes, float64(chunkBytes)/(float64(samplingRate)*float64(bytesPerSample)))
+
+	// Calculate total chunks for progress reporting
+	totalChunks := (len(audioData) + chunkBytes - 1) / chunkBytes
+
+	// send audio in chunks
+	for i := 0; i < len(audioData); i += chunkBytes {
+		end := i + chunkBytes
 		if end > len(audioData) {
 			end = len(audioData)
 		}
 
 		chunk := audioData[i:end]
-		if err := stream.Send(&pb.AudioChunk{Data: chunk}); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return "", fmt.Errorf("error sending audio chunk: %v", err)
+		// pad final chunk if too small
+		if end == len(audioData) && len(chunk) < chunkBytes {
+			log.Printf("Final chunk is %d bytes, padding to %d bytes", len(chunk), chunkBytes)
+			padded := make([]byte, chunkBytes)
+			copy(padded, chunk)
+			chunk = padded
+			log.Printf("Padded final chunk from %d to %d bytes", len(audioData)-i, chunkBytes)
 		}
 
-		// Optional: add a slight delay to simulate real-time streaming
-		time.Sleep(10 * time.Millisecond)
+		currentChunk := (i / chunkBytes) + 1
+		log.Printf("Sending chunk %d of %d, size: %d bytes, time range: %.1f-%.1f seconds",
+			currentChunk, totalChunks, len(chunk),
+			float64(i)/(float64(samplingRate)*float64(bytesPerSample)),
+			float64(end)/(float64(samplingRate)*float64(bytesPerSample)))
+
+		if err := stream.Send(&pb.AudioChunk{Data: chunk}); err != nil {
+			return "", fmt.Errorf("error sending audio chunk %d/%d: %v", currentChunk, totalChunks, err)
+		}
+
+		// throttle to avoid overwhelming server
+		time.Sleep(30 * time.Millisecond)
 	}
 
-	// Get the response
-	reply, err := stream.CloseAndRecv()
-	if err != nil {
-		return "", fmt.Errorf("error receiving transcription: %v", err)
+	// signal done
+	log.Printf("Finished sending all audio chunks, closing send stream")
+	if err := stream.CloseSend(); err != nil {
+		return "", fmt.Errorf("error closing send: %v", err)
 	}
 
-	return reply.Text, nil
+	// receive partial transcripts
+	var fullText string
+	segmentCount := 0
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			log.Printf("Reached end of transcript stream with %d segments", segmentCount)
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("error receiving transcription: %v", err)
+		}
+		segmentCount++
+		part := resp.GetText()
+		log.Printf("Partial transcript #%d received at %s: %q",
+			segmentCount, time.Now().Format(time.RFC3339), part)
+		fullText += part + " "
+	}
+
+	return fullText, nil
 }
 
 func main() {
-	// Test mode can be one of:
-	// - "simulate" - Send simulated audio data
-	// - "file" - Stream audio from a file (if provided)
-	testMode := "file"              // Changed default to "file" since we're focusing on WAV reading
-	audioFilePath := "/app/jfk.wav" // Change this to your audio file path
-
-	// Log the file path we're trying to open
-	log.Printf("Attempting to open audio file: %s", audioFilePath)
-
-	// Check if file exists
+	audioFilePath := "/app/jfk.wav"
 	if _, err := os.Stat(audioFilePath); os.IsNotExist(err) {
 		log.Fatalf("Audio file does not exist: %s", audioFilePath)
 	}
 
-	// Connect to whisper service
+	// Debug file size
+	fileInfo, err := os.Stat(audioFilePath)
+	if err == nil {
+		log.Printf("Audio file size: %d bytes", fileInfo.Size())
+	}
+
 	conn, err := grpc.Dial("unix:///app/sockets/whisper.sock", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to whisper service: %v", err)
@@ -169,82 +203,16 @@ func main() {
 
 	client := pb.NewWhisperServiceClient(conn)
 
-	switch testMode {
-	case "file":
-		// Read WAV file
-		audioData, err := readWAVFile(audioFilePath)
-		if err != nil {
-			log.Fatalf("Failed to read WAV file: %v", err)
-		}
-
-		log.Printf("Successfully read WAV file, got %d bytes of audio data", len(audioData))
-		log.Printf("Streaming WAV file to whisper service...")
-
-		// Stream to whisper
-		transcription, err := streamAudioToWhisper(client, audioData, 4096) // 4KB chunks
-		if err != nil {
-			log.Fatalf("Failed to stream audio: %v", err)
-		}
-
-		fmt.Printf("Transcription: %s\n", transcription)
-
-	case "simulate":
-		// Simulate streaming with dummy PCM data
-		log.Println("Simulating audio stream with dummy data...")
-
-		// Create a context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		// Create a stream
-		stream, err := client.StreamAudio(ctx)
-		if err != nil {
-			log.Fatalf("Error creating stream: %v", err)
-		}
-
-		// Generate some dummy PCM data (sine wave)
-		// Real implementation would use actual audio data
-		const sampleRate = 16000
-		const duration = 3    // seconds
-		const frequency = 440 // A4 note
-
-		// Generate ~3 seconds of 16-bit PCM audio (sine wave)
-		numSamples := sampleRate * duration
-		audioData := make([]byte, numSamples*2) // 2 bytes per sample (16-bit)
-
-		for i := 0; i < numSamples; i++ {
-			// Simple sine wave
-			amplitude := int16(10000 * float64(i%100) / 100.0)
-
-			// Convert to bytes and store in little-endian format
-			audioData[i*2] = byte(amplitude & 0xFF)
-			audioData[i*2+1] = byte((amplitude >> 8) & 0xFF)
-		}
-
-		// Send in chunks of 1600 samples (~100ms at 16kHz)
-		const chunkSize = 3200 // 1600 samples * 2 bytes per sample
-
-		for i := 0; i < len(audioData); i += chunkSize {
-			end := i + chunkSize
-			if end > len(audioData) {
-				end = len(audioData)
-			}
-
-			chunk := audioData[i:end]
-			if err := stream.Send(&pb.AudioChunk{Data: chunk}); err != nil {
-				log.Fatalf("Error sending audio chunk: %v", err)
-			}
-
-			// Simulate real-time streaming rate
-			time.Sleep(100 * time.Millisecond)
-		}
-
-		// Get transcription result
-		reply, err := stream.CloseAndRecv()
-		if err != nil {
-			log.Fatalf("Error receiving transcription: %v", err)
-		}
-
-		fmt.Printf("Transcription: %s\n", reply.Text)
+	audioData, err := readWAVFile(audioFilePath)
+	if err != nil {
+		log.Fatalf("Failed to read WAV file: %v", err)
 	}
+	log.Printf("Read WAV file, %d bytes", len(audioData))
+
+	transcription, err := streamAudioToWhisper(client, audioData)
+	if err != nil {
+		log.Fatalf("Streaming failed: %v", err)
+	}
+
+	fmt.Printf("Transcription: %s\n", transcription)
 }

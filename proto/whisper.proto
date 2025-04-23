@@ -6,7 +6,7 @@ package whisper;
 option go_package = "./proto;pb";
 
 service WhisperService {
-	rpc StreamAudio (stream AudioChunk) returns (Transcription);
+	rpc StreamAudio (stream AudioChunk) returns (stream Transcription);
 }
 
 message AudioChunk {
