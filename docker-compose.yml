@@ -17,7 +17,7 @@ services:
       echo 'Waiting for whisper service to be ready...' &&
       while [ ! -f /app/sockets/ready ]; do sleep 0.5; done &&
       echo 'Whisper service is ready, starting API...' &&
-      exec /app/api"
+      exec /app/server"
 
   whisper:
     build:
