@@ -1,6 +1,6 @@
 FROM ubuntu:22.04
 
-# Install dependencies
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -14,39 +14,41 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Clone whisper.cpp
-RUN git clone https://github.com/ggerganov/whisper.cpp.git && \
-    cd whisper.cpp && \
-    make WHISPER_NO_ACCEL=1 -j$(nproc)
+# Clone ggml-org whisper.cpp and checkout a stable tag (optional)
+RUN git clone https://github.com/ggml-org/whisper.cpp.git /app/whisper.cpp && \
+    cd /app/whisper.cpp && \
+    git checkout v1.7.5
 
-# Create models directory and download a model
-RUN mkdir -p /app/models
-RUN wget -O /app/models/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+# Download model weights
+RUN mkdir -p /app/models && \
+    wget -O /app/models/ggml-base.en.bin \
+      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 
-# Copy whisper source code
-COPY whisper/ .
-
-# Copy proto files from the root-level proto directory
+# Copy server sources & proto definitions
+COPY whisper/ /app/
 COPY proto/ /app/proto/
 
-# Generate proto files
+# Generate gRPC bindings
 RUN protoc --proto_path=/app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
     --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` /app/proto/whisper.proto
 
+# Enable core dumps (optional)
 RUN ulimit -c unlimited
 
-# Build your whisper_server app with cmake
-RUN mkdir -p build && cd build && \
-    cmake .. \
+# Build both whisper.cpp and the server in one step
+RUN mkdir -p /app/build && cd /app/build && \
+    cmake /app \
       -DWHISPER_NO_ACCEL=ON \
-      -DWHISPER_SIMD=NONE \
+      -DGGML_DISABLE_CUDA=ON \
+      -DGGML_DISABLE_METAL=ON \
+      -DGGML_SIMD=NONE \
       -DWHISPER_USE_OPENMP=OFF && \
     make -j$(nproc)
 
-# Create required directory for socket
+# Prepare socket directory
 RUN mkdir -p /app/sockets && chmod 777 /app/sockets
 
-CMD ["./build/whisper_server"]
+# Launch the server
+CMD ["/app/build/whisper_server"]
