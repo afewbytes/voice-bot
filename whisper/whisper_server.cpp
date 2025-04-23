@@ -95,7 +95,7 @@ public:
         wparams.translate        = false;
         wparams.language         = "en";
         wparams.n_threads        = static_cast<int>(std::thread::hardware_concurrency());
-        wparams.no_context       = true;
+        wparams.no_context       = false;
         wparams.single_segment   = false;
 
         const int sample_rate = 16000;
