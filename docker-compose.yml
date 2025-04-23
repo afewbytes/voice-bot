@@ -7,6 +7,8 @@ services:
       dockerfile: api/Dockerfile
     volumes:
       - whisper-socket:/app/sockets
+    ports:
+      - "8090:8090"  # Expose port for the audio receiver
     depends_on:
       whisper:
         condition: service_healthy
