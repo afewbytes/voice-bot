@@ -104,30 +104,20 @@ public:
         }
         
         AudioChunk chunk;
-        std::vector<float> audio_data;
+        std::vector<float> audio_buffer;
+        std::string transcription;
+        const int min_samples_to_process = 16000; // Process at least 1 second of audio (16kHz)
+        
+        // Function to pad audio with silence if needed
+        auto padAudioToMinLength = [](std::vector<float>& audio, size_t min_length) {
+            if (audio.size() < min_length) {
+                size_t padding_needed = min_length - audio.size();
+                audio.resize(min_length, 0.0f); // Pad with zeros (silence)
+                std::cout << "Padded audio with " << padding_needed << " samples of silence" << std::endl;
+            }
+        };
         
         std::cout << "Starting to receive audio chunks..." << std::endl;
-        
-        // Process incoming audio chunks
-        while (reader->Read(&chunk)) {
-            std::string chunk_data = chunk.data();
-            std::cout << "Received audio chunk of size: " << chunk_data.size() << " bytes" << std::endl;
-            
-            if (chunk_data.empty()) {
-                continue;
-            }
-            
-            // Convert and append to our audio buffer
-            auto pcm_chunk = convert_audio_bytes_to_float(chunk_data);
-            audio_data.insert(audio_data.end(), pcm_chunk.begin(), pcm_chunk.end());
-        }
-        
-        std::cout << "Finished receiving audio. Total samples: " << audio_data.size() << std::endl;
-        
-        if (audio_data.empty()) {
-            response->set_text("No audio data received");
-            return Status::OK;
-        }
         
         // Set up whisper parameters for transcription
         whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
@@ -138,36 +128,73 @@ public:
         wparams.print_timestamps = false;
         wparams.print_special    = false;
         wparams.translate        = false;
-        wparams.language         = "en";  // Set to desired language or auto-detect
-        wparams.n_threads        = 1;
+        wparams.language         = "en";
+        wparams.n_threads        = 4; // Increased thread count for faster processing
         wparams.offset_ms        = 0;
         wparams.no_context       = true;
-        wparams.single_segment   = false; // Process as a single segment
+        wparams.single_segment   = true; // Process one segment at a time
         
-        std::cout << "Processing audio with whisper..." << std::endl;
-        
-        // Process the audio
-        if (whisper_full(ctx, wparams, audio_data.data(), audio_data.size()) != 0) {
-            std::cerr << "Failed to process audio with whisper" << std::endl;
-            response->set_text("Failed to process audio");
-            return Status(grpc::StatusCode::INTERNAL, "Whisper processing failed");
-        }
-        
-        // Extract the transcription results
-        const int n_segments = whisper_full_n_segments(ctx);
-        std::string transcription;
-        
-        for (int i = 0; i < n_segments; ++i) {
-            const char* segment_text = whisper_full_get_segment_text(ctx, i);
-            transcription += segment_text;
+        // Process incoming audio chunks
+        while (reader->Read(&chunk)) {
+            std::string chunk_data = chunk.data();
             
-            // Add spacing between segments
-            if (i < n_segments - 1) {
-                transcription += " ";
+            if (chunk_data.empty()) {
+                continue;
+            }
+            
+            // Convert and append to our audio buffer
+            auto pcm_chunk = convert_audio_bytes_to_float(chunk_data);
+            audio_buffer.insert(audio_buffer.end(), pcm_chunk.begin(), pcm_chunk.end());
+            
+            // Process if we have enough audio data
+            if (audio_buffer.size() >= min_samples_to_process) {
+                std::cout << "Processing " << audio_buffer.size() << " samples..." << std::endl;
+                
+                // Ensure audio buffer is at least 16000 samples (1 second)
+                padAudioToMinLength(audio_buffer, 16000);
+                
+                // Process the audio buffer
+                if (whisper_full(ctx, wparams, audio_buffer.data(), audio_buffer.size()) != 0) {
+                    std::cerr << "Failed to process audio chunk with whisper" << std::endl;
+                    continue; // Skip this chunk and continue
+                }
+                
+                // Extract the transcription results
+                const int n_segments = whisper_full_n_segments(ctx);
+                for (int i = 0; i < n_segments; ++i) {
+                    const char* segment_text = whisper_full_get_segment_text(ctx, i);
+                    if (segment_text && strlen(segment_text) > 0) {
+                        transcription += segment_text;
+                        transcription += " ";
+                        std::cout << "Incremental transcription: " << segment_text << std::endl;
+                    }
+                }
+                
+                // Clear the buffer for the next batch of audio
+                audio_buffer.clear();
             }
         }
         
-        std::cout << "Transcription result: " << transcription << std::endl;
+        // Process any remaining audio
+        if (!audio_buffer.empty()) {
+            std::cout << "Processing remaining " << audio_buffer.size() << " samples..." << std::endl;
+            
+            // Ensure audio buffer is at least 16000 samples (1 second)
+            padAudioToMinLength(audio_buffer, 16000);
+            
+            if (whisper_full(ctx, wparams, audio_buffer.data(), audio_buffer.size()) == 0) {
+                const int n_segments = whisper_full_n_segments(ctx);
+                for (int i = 0; i < n_segments; ++i) {
+                    const char* segment_text = whisper_full_get_segment_text(ctx, i);
+                    if (segment_text && strlen(segment_text) > 0) {
+                        transcription += segment_text;
+                        transcription += " ";
+                    }
+                }
+            }
+        }
+        
+        std::cout << "Final transcription result: " << transcription << std::endl;
         response->set_text(transcription);
         return Status::OK;
     }
