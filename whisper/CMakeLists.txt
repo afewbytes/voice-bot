@@ -6,15 +6,32 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(GRPC REQUIRED grpc++)
 
-# Print versions for debugging
+# ───────────────────────────────────────────────────────
+#  Versions (for your build logs)
+# ───────────────────────────────────────────────────────
 message(STATUS "Using Protobuf version: ${Protobuf_VERSION}")
 message(STATUS "Using gRPC version: ${GRPC_VERSION}")
 
-# Set whisper.cpp directory - adjust path if needed
+# ───────────────────────────────────────────────────────
+#  whisper.cpp location
+# ───────────────────────────────────────────────────────
 set(WHISPER_CPP_PATH "/app/whisper.cpp")
 message(STATUS "Using whisper.cpp from: ${WHISPER_CPP_PATH}")
 
-# Include directories
+# ───────────────────────────────────────────────────────
+#  Global compile flags to disable all ggml back-ends
+# ───────────────────────────────────────────────────────
+add_compile_definitions(
+    WHISPER_NO_ACCEL=1     # whisper.cpp flag
+    GGML_DISABLE_DEV=1          # ggml flag (safe even if ggml is older)
+)
+
+# Optional: extra optimisation & PIC
+add_compile_options(-O3 -fPIC)
+
+# ───────────────────────────────────────────────────────
+#  Include / link paths
+# ───────────────────────────────────────────────────────
 include_directories(
     ${GRPC_INCLUDE_DIRS}
     ${Protobuf_INCLUDE_DIRS}
@@ -28,20 +45,20 @@ include_directories(
 
 link_directories(
     ${GRPC_LIBRARY_DIRS}
-    ${WHISPER_CPP_PATH}
 )
 
-# Include all .cpp and .c sources from whisper.cpp and ggml
+# ───────────────────────────────────────────────────────
+#  Whisper / ggml source files (built here in-tree)
+# ───────────────────────────────────────────────────────
 file(GLOB WHISPER_SOURCES
     "${WHISPER_CPP_PATH}/src/*.cpp"
     "${WHISPER_CPP_PATH}/ggml/src/*.cpp"
     "${WHISPER_CPP_PATH}/ggml/src/*.c"
 )
 
-# Debug output to verify files found
-message(STATUS "Whisper sources: ${WHISPER_SOURCES}")
-
-# Define executable
+# ───────────────────────────────────────────────────────
+#  Executable
+# ───────────────────────────────────────────────────────
 add_executable(whisper_server
     whisper_server.cpp
     proto/whisper.pb.cc
@@ -49,13 +66,14 @@ add_executable(whisper_server
     ${WHISPER_SOURCES}
 )
 
-# Link libraries
 target_link_libraries(whisper_server
     ${GRPC_LIBRARIES}
     ${Protobuf_LIBRARIES}
     Threads::Threads
 )
 
-# Set C++ standard
+# ───────────────────────────────────────────────────────
+#  C++ standard
+# ───────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

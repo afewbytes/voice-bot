@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     protobuf-compiler-grpc \
     pkg-config \
     wget \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -19,7 +20,7 @@ WORKDIR /app
 # Clone whisper.cpp
 RUN git clone https://github.com/ggerganov/whisper.cpp.git && \
     cd whisper.cpp && \
-    make
+    make WHISPER_NO_ACCEL=1 -j$(nproc)
 
 # Create models directory and download a model
 RUN mkdir -p /app/models
@@ -35,10 +36,15 @@ COPY proto/ /app/proto/
 RUN protoc --proto_path=/app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
     --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` /app/proto/whisper.proto
 
-# Build
+RUN ulimit -c unlimited
+
+# Build your whisper_server app with cmake
 RUN mkdir -p build && cd build && \
-    cmake .. && \
-    make
+    cmake .. \
+      -DWHISPER_NO_ACCEL=ON \
+      -DWHISPER_SIMD=NONE \
+      -DWHISPER_USE_OPENMP=OFF && \
+    make -j$(nproc)
 
 # Create required directory for socket
 RUN mkdir -p /app/sockets && chmod 777 /app/sockets

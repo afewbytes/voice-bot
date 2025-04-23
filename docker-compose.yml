@@ -41,7 +41,7 @@ services:
       resources:
         limits:
           cpus: '4'
-          memory: 10G
+          memory: 5G
 
 volumes:
   whisper-socket:

@@ -10,6 +10,7 @@
 #include "whisper.grpc.pb.h"
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/resource.h>   
 
 // Include whisper.h
 #include "whisper.h"
@@ -138,7 +139,7 @@ public:
         wparams.print_special    = false;
         wparams.translate        = false;
         wparams.language         = "en";  // Set to desired language or auto-detect
-        wparams.n_threads        = std::thread::hardware_concurrency();
+        wparams.n_threads        = 1;
         wparams.offset_ms        = 0;
         wparams.no_context       = true;
         wparams.single_segment   = false; // Process as a single segment
@@ -182,6 +183,10 @@ void cleanup_socket() {
 
 void RunServer() {
     std::string socket_addr = "unix:" + SOCKET_PATH;
+    std::cout << whisper_print_system_info() << std::endl;
+
+    struct rlimit rlim{RLIM_INFINITY, RLIM_INFINITY};
+    setrlimit(RLIMIT_CORE, &rlim);
     
     // Ensure directory exists
     mkdir("/app/sockets", 0777);
