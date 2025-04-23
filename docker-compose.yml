@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    volumes:
+      - whisper-socket:/app/sockets
+    depends_on:
+      - whisper
+
+  whisper:
+    build:
+      context: .
+      dockerfile: whisper/Dockerfile
+    volumes:
+      - whisper-socket:/app/sockets
+
+volumes:
+  whisper-socket:
+    driver: local

@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package whisper;
+
+// 👇 Add this line
+option go_package = "./proto;pb";
+
+service WhisperService {
+	rpc StreamAudio (stream AudioChunk) returns (Transcription);
+}
+
+message AudioChunk {
+	bytes data = 1;
+}
+
+message Transcription {
+	string text = 1;
+}
