@@ -42,4 +42,4 @@ RUN mkdir -p /app/llama_server/build && \
     make -j$(nproc)
 
 # 6) Pass model path directly as the first argument (no --model flag)
-CMD ["/app/llama_server/build/llama_server", "/app/models/llama-2-7b.Q2_K.gguf"]
+CMD ["/app/llama_server/build/llama_server", "/app/models/llama-2-7b.Q4_K_M.gguf"]

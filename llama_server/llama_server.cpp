@@ -20,132 +20,119 @@ using voice::GenerateResponse;
 // Function to run a simple startup test
 bool run_startup_test(llama_model* model, llama_context* context, const llama_vocab* vocab) {
   std::cout << "Running startup test..." << std::endl;
-  
-  // Test prompt similar to what's used in simple.cpp
+
   const std::string test_prompt = "Hello, my name is";
   std::cout << "Startup test prompt: \"" << test_prompt << "\"" << std::endl;
-  
-  // Tokenize the test prompt
+
   int n_tokens = -llama_tokenize(
       vocab, test_prompt.c_str(), (int)test_prompt.size(),
-      /*out*/ nullptr, /*buf_capacity=*/0,
-      /*add_bos=*/true, /*special=*/true
+      nullptr, 0,
+      true, true
   );
-  
+
   if (n_tokens <= 0) {
     std::cerr << "Startup test failed: Tokenization error" << std::endl;
     return false;
   }
-  
+
   std::vector<llama_token> tokens(n_tokens);
   if (llama_tokenize(
           vocab, test_prompt.c_str(), (int)test_prompt.size(),
           tokens.data(), n_tokens,
-          /*add_bos=*/true, /*special=*/true
+          true, true
       ) < 0) {
     std::cerr << "Startup test failed: Tokenization error" << std::endl;
     return false;
   }
-  
-  // Evaluate prompt
+
   llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
   if (llama_decode(context, batch) != 0) {
     std::cerr << "Startup test failed: Prompt evaluation error" << std::endl;
     return false;
   }
-  
-  // Sample a token to verify generation works
+
   llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
   sparams.no_perf = false;
   llama_sampler *sampler = llama_sampler_chain_init(sparams);
   llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
-  
-  // Generate just one token first to test basic functionality
-  llama_token token_id = llama_sampler_sample(sampler, context, /*idx=*/-1);
-  
+
+  llama_token token_id = llama_sampler_sample(sampler, context, -1);
+
   if (token_id < 0 || llama_vocab_is_eog(vocab, token_id)) {
     std::cerr << "Startup test failed: Could not generate a valid token" << std::endl;
     llama_sampler_free(sampler);
     return false;
   }
-  
-  // Use a larger buffer for token_to_piece
+
   char buf[16];
-  int pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), /*pad=*/0, /*special=*/true);
+  int pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), 0, true);
   if (pcsz <= 0) {
     std::cerr << "Startup test failed: Could not convert token to piece" << std::endl;
     llama_sampler_free(sampler);
     return false;
   }
-  
+
   std::string first_piece(buf, pcsz);
   std::cout << "First token generated: \"" << first_piece << "\"" << std::endl;
-  
-  // If we successfully generated one token, try to generate a few more
+
   std::string full_output = first_piece;
-  
-  // Reset context and re-evaluate the prompt + first token for clean generation
+
   if (llama_decode(context, batch) != 0) {
     std::cerr << "Startup test failed: Could not reset context" << std::endl;
     llama_sampler_free(sampler);
     return false;
   }
-  
-  // Feed the first token
+
   batch = llama_batch_get_one(&token_id, 1);
   if (llama_decode(context, batch) != 0) {
     std::cerr << "Startup test failed: Decoding error" << std::endl;
     llama_sampler_free(sampler);
     return false;
   }
-  
-  // Now generate a few more tokens, but don't fail the test if they have issues
-  const int more_tokens = 2; // Generate only 2 more tokens for safety
+
+  const int more_tokens = 2;
   std::cout << "Generating " << more_tokens << " more tokens: ";
   bool generation_complete = false;
-  
+
   for (int i = 0; i < more_tokens && !generation_complete; ++i) {
-    token_id = llama_sampler_sample(sampler, context, /*idx=*/-1);
-    
+    token_id = llama_sampler_sample(sampler, context, -1);
+
     if (token_id < 0 || llama_vocab_is_eog(vocab, token_id)) {
       std::cout << "[end]";
       generation_complete = true;
       continue;
     }
-    
-    pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), /*pad=*/0, /*special=*/true);
+
+    pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), 0, true);
     if (pcsz <= 0) {
       std::cout << "[invalid]";
       continue;
     }
-    
+
     std::string piece(buf, pcsz);
     std::cout << piece;
     full_output += piece;
-    
+
     batch = llama_batch_get_one(&token_id, 1);
     if (llama_decode(context, batch) != 0) {
       std::cout << "[error]";
       break;
     }
   }
-  
+
   std::cout << std::endl;
   std::cout << "Startup test completed successfully" << std::endl;
-  
-  // Clean up
+
   llama_sampler_free(sampler);
-  
+
   return true;
 }
 
 class LlamaServiceImpl final : public LlamaService::Service {
 public:
   explicit LlamaServiceImpl(const std::string &model_path) {
-    // 1) initialize backend
     ggml_backend_load_all();
 
-    // 2) load model
     llama_model_params mparams = llama_model_default_params();
     model_ = llama_model_load_from_file(model_path.c_str(), mparams);
     if (!model_) {
@@ -153,18 +140,16 @@ public:
       std::exit(1);
     }
 
-    // 3) create context
-    llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx   = 1024;
-    cparams.n_batch = 8;
-    context_ = llama_init_from_model(model_, cparams);
+    cparams_ = llama_context_default_params();
+    cparams_.n_ctx   = 1024;
+    cparams_.n_batch = 8;
+    context_ = llama_init_from_model(model_, cparams_);
     if (!context_) {
       std::cerr << "Failed to create llama_context\n";
       llama_model_free(model_);
       std::exit(1);
     }
 
-    // 4) grab vocab from model
     vocab_ = llama_model_get_vocab(model_);
     if (!vocab_) {
       std::cerr << "Failed to get vocab from model\n";
@@ -173,7 +158,6 @@ public:
       std::exit(1);
     }
 
-    // 5) run startup test to verify model works
     if (!run_startup_test(model_, context_, vocab_)) {
       std::cerr << "Startup test failed. Exiting...\n";
       llama_free(context_);
@@ -189,59 +173,59 @@ public:
 
   Status Generate(ServerContext* /*ctx*/, const GenerateRequest* req,
                   ServerWriter<GenerateResponse>* writer) override {
+    llama_free(context_);
+    context_ = llama_init_from_model(model_, cparams_);
+    if (!context_) {
+      return Status(grpc::StatusCode::INTERNAL, "Failed to reset llama context");
+    }
+
     const std::string prompt = req->prompt();
     const int max_tokens = req->max_tokens();
     const float temp   = req->temperature();
     const float top_p  = req->top_p();
 
-    // --- tokenize prompt (count tokens) ---
     int n_tokens = -llama_tokenize(
         vocab_, prompt.c_str(), (int)prompt.size(),
-        /*out*/ nullptr, /*buf_capacity=*/0,
-        /*add_bos=*/true, /*special=*/true  // enable special tokens
+        nullptr, 0,
+        true, true
     );
     if (n_tokens <= 0) {
       return Status(grpc::StatusCode::INTERNAL, "tokenization failure");
     }
-    // actual tokenize
+
     std::vector<llama_token> tokens(n_tokens);
     if (llama_tokenize(
             vocab_, prompt.c_str(), (int)prompt.size(),
             tokens.data(), n_tokens,
-            /*add_bos=*/true, /*special=*/true  // match count call
+            true, true
         ) < 0) {
       return Status(grpc::StatusCode::INTERNAL, "tokenization failure");
     }
 
-    // --- evaluate prompt once ---
     llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
     if (llama_decode(context_, batch) != 0) {
       return Status(grpc::StatusCode::INTERNAL, "prompt evaluation failed");
     }
 
-    // --- set up sampler chain (greedy only, per simple.cpp) ---
     llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
     sparams.no_perf = false;
     llama_sampler *sampler = llama_sampler_chain_init(sparams);
     llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 
-    // --- streaming generation ---
     GenerateResponse resp;
     for (int i = 0; i < max_tokens; ++i) {
-      // sample next token from last logits
-      llama_token token_id = llama_sampler_sample(sampler, context_, /*idx=*/-1);
+      llama_token token_id = llama_sampler_sample(sampler, context_, -1);
       if (llama_vocab_is_eog(vocab_, token_id)) {
         break;
       }
       char buf[8];
-      int pcsz = llama_token_to_piece(vocab_, token_id, buf, sizeof(buf), /*pad=*/0, /*special=*/true);
+      int pcsz = llama_token_to_piece(vocab_, token_id, buf, sizeof(buf), 0, true);
       std::string piece = (pcsz > 0 ? std::string(buf, pcsz) : "");
 
       resp.set_text(piece);
       resp.set_done(false);
       writer->Write(resp);
 
-      // feed token for next decode
       batch = llama_batch_get_one(&token_id, 1);
       if (llama_decode(context_, batch) != 0) {
         llama_sampler_free(sampler);
@@ -249,7 +233,6 @@ public:
       }
     }
 
-    // signal done
     resp.set_text("");
     resp.set_done(true);
     writer->Write(resp);
@@ -262,11 +245,12 @@ private:
   llama_model*    model_{nullptr};
   llama_context*  context_{nullptr};
   const llama_vocab* vocab_{nullptr};
+  llama_context_params cparams_;
 };
 
 int main(int argc, char** argv) {
   const std::string server_address("unix:///app/llama-sockets/llama.sock");
-  std::string model_path = "/app/models/llama-2-7b.gguf";
+  std::string model_path = "/app/models/llama-2-7b.Q4_K_M.gguf";
   if (argc > 1) {
     model_path = argv[1];
   }
