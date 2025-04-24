@@ -8,12 +8,12 @@ services:
     volumes:
       - whisper-socket:/app/sockets
     ports:
-      - "8090:8090"  # Expose port for the audio receiver
+      - "8090:8090"  # Expose port for the gRPC server
     depends_on:
       whisper:
         condition: service_healthy
     restart: on-failure
-    # Modify your API service to initially wait for the whisper service
+    # The entrypoint doesn't need to change
     entrypoint: >
       /bin/sh -c "
       echo 'Waiting for whisper service to be ready...' &&

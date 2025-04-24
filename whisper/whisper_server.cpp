@@ -204,6 +204,12 @@ grpc::Status WhisperServiceImpl::StreamAudio(
 
     whisper::AudioChunk chunk;
     while (stream->Read(&chunk)) {
+        // Print marker status for every chunk
+        LOG_DEBUG("Session " << session_id << ": Received chunk - speech_start: " 
+                 << (chunk.speech_start() ? "true" : "false") 
+                 << ", speech_end: " << (chunk.speech_end() ? "true" : "false")
+                 << ", data size: " << chunk.data().size() << " bytes");
+                 
         // Check for speech boundary markers
         if (chunk.speech_start()) {
             LOG_INFO("Session " << session_id << ": Received SPEECH_START marker");
@@ -248,7 +254,7 @@ grpc::Status WhisperServiceImpl::StreamAudio(
                          << " samples");
                 
                 // If buffer gets too large, process intermediate results
-                if (audio_buffer.size() * sizeof(float) > MAX_AUDIO_BUFFER / 2) {
+                if (audio_buffer.size() * sizeof(float) > MAX_AUDIO_BUFFER / 4) {
                     LOG_INFO("Session " << session_id << ": Buffer large enough for intermediate processing");
                     process_buffer(false); // false = not final processing
                     
