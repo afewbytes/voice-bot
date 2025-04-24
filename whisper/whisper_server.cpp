@@ -8,281 +8,239 @@
 #include <sys/resource.h>
 #include <cmath>
 #include <chrono>
+#include <vector>
+#include <algorithm>
+#include <string>
+#include <deque>
 
 static const std::string SOCKET_PATH = "/app/sockets/whisper.sock";
-static const char* MODEL_PATH = "/app/models/ggml-base.en.bin";
+static const char* MODEL_PATH        = "/app/models/ggml-base.en.bin";
 
-// ContextGuard implementation
+// Buffer parameters
+static const size_t MAX_AUDIO_BUFFER = 30 * 16000 * sizeof(int16_t); // 30 seconds max buffer
+static const size_t MIN_PROCESS_SIZE = 0.5 * 16000 * sizeof(int16_t); // Min 0.5 seconds for processing
+
+// ContextGuard (unchanged)
 ContextGuard::ContextGuard(whisper_context* ctx, WhisperContextPool* pool)
     : ctx_(ctx), pool_(pool) {}
+ContextGuard::~ContextGuard() { pool_->release(ctx_); }
 
-ContextGuard::~ContextGuard() { 
-    pool_->release(ctx_); 
-}
-
-// WhisperContextPool implementation
+// WhisperContextPool (unchanged)
 WhisperContextPool::WhisperContextPool(size_t count) {
     auto params = whisper_context_default_params();
     params.use_gpu = false;
     for (size_t i = 0; i < count; ++i) {
         auto* ctx = whisper_init_from_file_with_params(MODEL_PATH, params);
-        if (!ctx) { std::cerr << "Failed loading model for pool instance " << i << std::endl; exit(1); }
+        if (!ctx) exit(1);
         pool_.push(ctx);
     }
 }
-
 WhisperContextPool::~WhisperContextPool() {
-    while (!pool_.empty()) { 
-        whisper_free(pool_.front()); 
-        pool_.pop(); 
+    while (!pool_.empty()) {
+        whisper_free(pool_.front());
+        pool_.pop();
     }
 }
-
 ContextGuardPtr WhisperContextPool::acquire() {
     std::unique_lock<std::mutex> lk(mux_);
     cond_.wait(lk, [&]{ return !pool_.empty(); });
-    auto* ctx = pool_.front(); 
-    pool_.pop();
+    auto* ctx = pool_.front(); pool_.pop();
     return std::make_unique<ContextGuard>(ctx, this);
 }
-
 void WhisperContextPool::release(whisper_context* ctx) {
     std::lock_guard<std::mutex> lk(mux_);
     pool_.push(ctx);
     cond_.notify_one();
 }
 
-// WhisperServiceImpl implementation
+// Updated Service Implementation
 WhisperServiceImpl::WhisperServiceImpl(WhisperContextPool& p) : pool_(p) {}
 
-grpc::Status WhisperServiceImpl::StreamAudio(grpc::ServerContext* /*ctx*/,
-                                      grpc::ServerReaderWriter<whisper::Transcription, whisper::AudioChunk>* stream) {
+grpc::Status WhisperServiceImpl::StreamAudio(
+    grpc::ServerContext*,
+    grpc::ServerReaderWriter<whisper::Transcription, whisper::AudioChunk>* stream
+) {
     auto guard = pool_.acquire();
     auto* ctx = guard->get();
 
-    // whisper params - optimized for faster transcription
+    // Prepare whisper parameters 
     whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     wparams.print_realtime   = false;
     wparams.print_progress   = false;
     wparams.print_timestamps = true;
     wparams.translate        = false;
     wparams.language         = "en";
-    wparams.n_threads        = static_cast<int>(std::thread::hardware_concurrency());
-    wparams.no_context       = true;    // Faster processing with context disabled
-    wparams.single_segment   = true;    // Better for real-time transcription
-    wparams.max_tokens       = 32;      // Limit token generation for faster response
+    wparams.n_threads        = int(std::thread::hardware_concurrency());
+    wparams.no_context       = false;
+    wparams.single_segment   = false; // Process as a whole utterance
+    wparams.max_tokens       = 0;     // Use full segment output
+    wparams.audio_ctx        = 0;
+
+    // Token context storage
+    std::vector<whisper_token> prompt_tokens;
+    const int N_CTX = whisper_n_text_ctx(ctx);
+
+    // Audio buffer for complete utterances
+    std::vector<float> audio_buffer;
+    audio_buffer.reserve(MAX_AUDIO_BUFFER / sizeof(float));
     
-    // Removed speed_up parameter as it's not available in this version
-
-    const int sample_rate = 16000;
+    // Time tracking
+    auto last_process_time = std::chrono::steady_clock::now();
+    bool processing_active = false;
     
-    // OPTIMIZED: Smaller time windows for faster processing
-    const int step_ms = 1000;      // 1 second step (was 5000ms)
-    const int len_ms  = 3000;      // 3 second window (was 10000ms)
-    const int keep_ms = 500;       // 0.5 second overlap (was 2000ms)
-    
-    const int n_step  = step_ms * sample_rate / 1000;
-    const int n_len   = len_ms  * sample_rate / 1000;
-    const int n_keep  = keep_ms * sample_rate / 1000;
-
-    if (VERBOSE_LOGGING) {
-        std::cerr << "Optimized parameters: step=" << step_ms << "ms, len=" << len_ms 
-                  << "ms, keep=" << keep_ms << "ms" << std::endl;
-    }
-
-    std::vector<float> buf_len(n_len, 0.0f);
-    std::vector<float> buf_old(n_keep, 0.0f);
-    std::vector<float> incoming;
-    incoming.reserve(n_step * 10);
-
-    float last_end_ts = 0.0f;
-    float window_offset = 0.0f;  // Track the absolute position of each window
-    whisper::AudioChunk chunk;
-
-    auto convert = [&](const std::string& bytes) {
-        size_t n = bytes.size() / sizeof(int16_t);
+    // Helper: convert incoming int16 data to float
+    auto to_f32 = [&](const std::string& in) {
+        size_t n = in.size() / sizeof(int16_t);
         std::vector<float> out(n);
-        const int16_t* data = reinterpret_cast<const int16_t*>(bytes.data());
-        for (size_t i = 0; i < n; ++i) out[i] = data[i] / 32768.0f;
+        auto d = reinterpret_cast<const int16_t*>(in.data());
+        for (size_t i = 0; i < n; ++i) {
+            out[i] = d[i] / 32768.0f;
+        }
         return out;
     };
 
-    // streaming loop
-    bool first_chunk = true;
-    uint64_t start_time = 0;
+    // Helper: process current audio buffer
+    auto process_buffer = [&]() -> bool {
+        if (audio_buffer.empty() || audio_buffer.size() < MIN_PROCESS_SIZE / sizeof(float)) {
+            return false;
+        }
 
+        // Process the entire buffer as a complete utterance
+        wparams.prompt_n_tokens = prompt_tokens.size();
+        wparams.prompt_tokens   = prompt_tokens.empty() ? nullptr : prompt_tokens.data();
+        
+        if (whisper_full(ctx, wparams, audio_buffer.data(), audio_buffer.size()) != 0) {
+            return false;
+        }
+
+        // Prepare output text - using a proper line break instead of ANSI clear
+        std::string out_text = "";
+        int n_segments = whisper_full_n_segments(ctx);
+        
+        for (int i = 0; i < n_segments; ++i) {
+            const char* seg = whisper_full_get_segment_text(ctx, i);
+            if (seg && *seg) out_text += seg;
+        }
+
+        // If we have text, send it to client with a proper line ending
+        if (!out_text.empty()) {
+            whisper::Transcription out;
+            out.set_text(out_text + "\n");
+            stream->Write(out);
+        }
+
+        // Update prompt tokens for context in next processing
+        prompt_tokens.clear();
+        for (int i = 0; i < n_segments; ++i) {
+            int nt = whisper_full_n_tokens(ctx, i);
+            for (int j = 0; j < nt; ++j) {
+                prompt_tokens.push_back(whisper_full_get_token_id(ctx, i, j));
+            }
+        }
+        if ((int)prompt_tokens.size() > N_CTX) {
+            prompt_tokens.erase(prompt_tokens.begin(), prompt_tokens.end() - N_CTX);
+        }
+
+        return true;
+    };
+
+    whisper::AudioChunk chunk;
+    size_t silence_count = 0;
+    const size_t silence_threshold = 10; // Arbitrary number to detect silence sections
+    
     while (stream->Read(&chunk)) {
-        if (first_chunk) {
-            first_chunk = false;
-            start_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            if (VERBOSE_LOGGING) {
-                std::cerr << "First audio chunk received" << std::endl;
+        auto data = to_f32(chunk.data());
+        
+        // Check if this is silence (VAD off period)
+        bool is_silence = false;
+        if (data.size() > 0) {
+            // Simple energy-based silence detection as a backup
+            float energy = 0.0f;
+            for (float sample : data) {
+                energy += sample * sample;
             }
-        }
-
-        auto pcm = convert(chunk.data());
-        incoming.insert(incoming.end(), pcm.begin(), pcm.end());
-
-        if (VERBOSE_LOGGING) {
-            std::cerr << "Audio buffer size: " << incoming.size() 
-                      << " samples (need " << n_step << " to process)" << std::endl;
-        }
-
-        // Process as soon as we have enough samples
-        while ((int)incoming.size() >= n_step) {
-            if (VERBOSE_LOGGING) {
-                uint64_t current_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-                std::cerr << "Processing window at t+" << (current_time - start_time) 
-                          << "ms, buffer: " << incoming.size() << " samples" << std::endl;
+            energy /= data.size();
+            
+            // Extremely low energy usually indicates silence or VAD off section
+            if (energy < 1e-6) {
+                silence_count++;
+                is_silence = (silence_count >= silence_threshold);
+            } else {
+                silence_count = 0;
             }
-
-            // build window with overlap
-            std::fill(buf_len.begin(), buf_len.end(), 0.0f);
-            std::copy(buf_old.begin(), buf_old.end(), buf_len.begin());
-            
-            // Copy the appropriate amount of new data
-            size_t to_copy = std::min((size_t)(n_len - n_keep), incoming.size());
-            std::copy(incoming.begin(), incoming.begin() + to_copy,
-                      buf_len.begin() + n_keep);
-
-            uint64_t before_whisper = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            
-            // Run inference
-            if (whisper_full(ctx, wparams, buf_len.data(), buf_len.size()) != 0) {
-                std::cerr << "Inference failed" << std::endl;
-                return grpc::Status::OK;
-            }
-
-            uint64_t after_whisper = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            
-            if (VERBOSE_LOGGING) {
-                std::cerr << "Whisper processing took " 
-                          << (after_whisper - before_whisper) << "ms" << std::endl;
-            }
-
-            // emit new segments by timestamp
-            int nseg = whisper_full_n_segments(ctx);
-            
-            if (VERBOSE_LOGGING) {
-                std::cerr << "Found " << nseg << " segment(s)" << std::endl;
-            }
-            
-            for (int i = 0; i < nseg; ++i) {
-                // Get relative timestamps within the window
-                float relative_start = whisper_full_get_segment_t0(ctx, i) * 0.02f;
-                float relative_end = whisper_full_get_segment_t1(ctx, i) * 0.02f;
-                
-                // Calculate absolute timestamps based on window position
-                float absolute_start = window_offset + relative_start;
-                float absolute_end = window_offset + relative_end;
-                
-                // Get the text and send it
-                const char* txt = whisper_full_get_segment_text(ctx, i);
-                std::string text = txt ? txt : "";
-                
-                // Skip empty segments
-                if (!text.empty()) {
-                    whisper::Transcription out;
-                    out.set_text(text);
-                    stream->Write(out);
-                    
-                    if (VERBOSE_LOGGING) {
-                        std::cerr << "Sent transcription: '" << text << "'" << std::endl;
-                    }
-                    
-                    last_end_ts = absolute_end;
-                }
-            }
-
-            // slide buffers
-            std::copy(buf_len.begin() + (n_len - n_keep), buf_len.end(), buf_old.begin());
-            incoming.erase(incoming.begin(), incoming.begin() + n_step);
-            
-            // Update the window offset for the next window
-            window_offset += (float)n_step / sample_rate;
-        }
-    }
-
-    // process any leftover audio
-    if (!incoming.empty()) {
-        if (VERBOSE_LOGGING) {
-            std::cerr << "Processing final " << incoming.size() << " samples" << std::endl;
         }
         
-        std::fill(buf_len.begin(), buf_len.end(), 0.0f);
-        std::copy(buf_old.begin(), buf_old.end(), buf_len.begin());
-        size_t copy_count = std::min((int)incoming.size(), n_len - n_keep);
-        std::copy(incoming.begin(), incoming.begin() + copy_count,
-                  buf_len.begin() + n_keep);
-
-        if (whisper_full(ctx, wparams, buf_len.data(), buf_len.size()) == 0) {
-            int nseg = whisper_full_n_segments(ctx);
-            for (int i = 0; i < nseg; ++i) {
-                float relative_start = whisper_full_get_segment_t0(ctx, i) * 0.02f;
-                float relative_end = whisper_full_get_segment_t1(ctx, i) * 0.02f;
-                
-                // Calculate absolute timestamps for final window
-                float absolute_start = window_offset + relative_start;
-                float absolute_end = window_offset + relative_end;
-                
-                const char* txt = whisper_full_get_segment_text(ctx, i);
-                std::string text = txt ? txt : "";
-                
-                if (!text.empty()) {
-                    whisper::Transcription out;
-                    out.set_text(text);
-                    stream->Write(out);
-                    last_end_ts = absolute_end;
-                }
+        // If this chunk has data, add it to our buffer
+        if (!data.empty()) {
+            // Append new audio data
+            audio_buffer.insert(audio_buffer.end(), data.begin(), data.end());
+            
+            // Limit buffer size to prevent memory issues
+            if (audio_buffer.size() * sizeof(float) > MAX_AUDIO_BUFFER) {
+                audio_buffer.erase(audio_buffer.begin(), 
+                    audio_buffer.begin() + (audio_buffer.size() - MAX_AUDIO_BUFFER / sizeof(float)));
+            }
+            
+            processing_active = true;
+        }
+        
+        // Determine if we should process the buffer
+        bool should_process = false;
+        
+        // Process if we have a silence section after activity (VAD "off" period)
+        if (is_silence && processing_active) {
+            should_process = true;
+        }
+        
+        // Process if we haven't processed in a while and have enough data
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - last_process_time).count();
+            
+        if (elapsed > 2000 && audio_buffer.size() * sizeof(float) >= MIN_PROCESS_SIZE) {
+            should_process = true;
+        }
+        
+        // Process the buffer if needed
+        if (should_process) {
+            if (process_buffer()) {
+                last_process_time = now;
+                audio_buffer.clear();
+                processing_active = false;
+                silence_count = 0;
             }
         }
     }
-
-    if (VERBOSE_LOGGING) {
-        std::cerr << "Stream ended, transcription complete" << std::endl;
+    
+    // Process any remaining audio at the end
+    if (!audio_buffer.empty()) {
+        process_buffer();
     }
 
     return grpc::Status::OK;
 }
 
+// socket setup / main() (unchanged)
 void cleanup_socket() {
     if (access(SOCKET_PATH.c_str(), F_OK) == 0) unlink(SOCKET_PATH.c_str());
 }
-
 void RunServer() {
     mkdir("/app/sockets", 0777);
     cleanup_socket();
     std::string addr = "unix:" + SOCKET_PATH;
-
-    // Increase the number of contexts in the pool if you have more CPU cores
-    int num_threads = std::max(1, (int)std::thread::hardware_concurrency());
-    std::cerr << "Starting WhisperContextPool with " << num_threads << " threads" << std::endl;
-    
-    WhisperContextPool pool(num_threads);
+    WhisperContextPool pool(std::max(1, int(std::thread::hardware_concurrency())));
     WhisperServiceImpl svc(pool);
-
-    grpc::ServerBuilder builder;
-    builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
-    builder.RegisterService(&svc);
-
-    auto server = builder.BuildAndStart();
-    if (!server) { std::cerr << "gRPC start failed" << std::endl; exit(1); }
+    grpc::ServerBuilder b;
+    b.AddListeningPort(addr, grpc::InsecureServerCredentials());
+    b.RegisterService(&svc);
+    auto s = b.BuildAndStart();
     std::ofstream("/app/sockets/ready").close();
-    std::cerr << "Server started and ready" << std::endl;
-    server->Wait();
+    s->Wait();
 }
-
 int main() {
     std::signal(SIGINT,  [](int){ cleanup_socket(); exit(0); });
     std::signal(SIGTERM, [](int){ cleanup_socket(); exit(0); });
-    
-    // Set high priority for the process
     setpriority(PRIO_PROCESS, 0, -10);
-    
     RunServer();
     return 0;
 }
