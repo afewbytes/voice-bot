@@ -114,18 +114,32 @@ grpc::Status WhisperServiceImpl::StreamAudio(
     };
 
     // Helper: process current audio buffer
+    // Helper: process current audio buffer
     auto process_buffer = [&](bool is_final) -> bool {
         if (audio_buffer.empty() || audio_buffer.size() < MIN_PROCESS_SIZE / sizeof(float)) {
             LOG_INFO("Session " << session_id << ": Buffer too small to process, size=" 
-                     << audio_buffer.size() << " samples ("
-                     << (audio_buffer.size() / WHISPER_SAMPLE_RATE) << "s)");
+                    << audio_buffer.size() << " samples ("
+                    << (audio_buffer.size() / WHISPER_SAMPLE_RATE) << "s)");
             return false;
         }
 
+        // Check if we need to pad the audio to meet the minimum requirement (1000ms)
+        const size_t min_samples_required = 1.0 * WHISPER_SAMPLE_RATE; // 1 second minimum
+        if (audio_buffer.size() < min_samples_required) {
+            size_t padding_size = min_samples_required - audio_buffer.size();
+            LOG_INFO("Session " << session_id << ": Audio too short (" 
+                    << std::fixed << std::setprecision(2) 
+                    << static_cast<float>(audio_buffer.size()) / WHISPER_SAMPLE_RATE 
+                    << "s), padding with " << padding_size << " samples of silence");
+            
+            // Add silence padding (zeros) to the end of the buffer
+            audio_buffer.resize(min_samples_required, 0.0f);
+        }
+
         LOG_INFO("Session " << session_id << ": Processing buffer with " 
-                 << audio_buffer.size() << " samples ("
-                 << std::fixed << std::setprecision(2) 
-                 << static_cast<float>(audio_buffer.size()) / WHISPER_SAMPLE_RATE << "s)");
+                << audio_buffer.size() << " samples ("
+                << std::fixed << std::setprecision(2) 
+                << static_cast<float>(audio_buffer.size()) / WHISPER_SAMPLE_RATE << "s)");
         
         auto process_start = std::chrono::steady_clock::now();
         
@@ -135,7 +149,7 @@ grpc::Status WhisperServiceImpl::StreamAudio(
         
         if (prompt_tokens.size() > 0) {
             LOG_DEBUG("Session " << session_id << ": Using " << prompt_tokens.size() 
-                      << " context tokens");
+                    << " context tokens");
         }
         
         if (whisper_full(ctx, wparams, audio_buffer.data(), audio_buffer.size()) != 0) {
@@ -152,7 +166,7 @@ grpc::Status WhisperServiceImpl::StreamAudio(
         int n_segments = whisper_full_n_segments(ctx);
         
         LOG_INFO("Session " << session_id << ": Processing completed in " << process_ms 
-                  << "ms, found " << n_segments << " segment(s)");
+                << "ms, found " << n_segments << " segment(s)");
         
         for (int i = 0; i < n_segments; ++i) {
             const char* seg = whisper_full_get_segment_text(ctx, i);
@@ -168,7 +182,7 @@ grpc::Status WhisperServiceImpl::StreamAudio(
             out.set_text(out_text + "\n");
             
             LOG_INFO("Session " << session_id << ": Sending transcription: \""
-                      << out_text << "\"");
+                    << out_text << "\"");
             
             if (!stream->Write(out)) {
                 LOG_ERROR("Session " << session_id << ": Failed to send transcription to client");
@@ -189,7 +203,7 @@ grpc::Status WhisperServiceImpl::StreamAudio(
             }
             if ((int)prompt_tokens.size() > N_CTX) {
                 LOG_DEBUG("Session " << session_id << ": Truncating context tokens from " 
-                         << prompt_tokens.size() << " to " << N_CTX);
+                        << prompt_tokens.size() << " to " << N_CTX);
                 prompt_tokens.erase(prompt_tokens.begin(), prompt_tokens.end() - N_CTX);
             }
         } else {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
@@ -39,13 +38,7 @@ const (
 	initialAdapt     = 5     // Number of initial frames for noise profile
 )
 
-// AudioSource defines an interface for different audio sources
-type AudioSource interface {
-	ReadSamples(samples []int16) (int, error)
-	Close() error
-}
-
-// MicSource implements AudioSource for microphone input
+// MicSource implements audio source for microphone input
 type MicSource struct {
 	stream *portaudio.Stream
 	buffer []int16
@@ -91,163 +84,6 @@ func (m *MicSource) Close() error {
 	return m.stream.Close()
 }
 
-// WAVSource implements AudioSource for WAV file input
-type WAVSource struct {
-	file          *os.File
-	header        wavHeader
-	bytesBuf      []byte
-	samplesRead   int
-	totalSamples  int
-	secondsPlayed float64
-}
-
-// WAV file header structure
-type wavHeader struct {
-	RiffMarker      [4]byte  // "RIFF"
-	FileSize        uint32   // File size - 8
-	WaveMarker      [4]byte  // "WAVE"
-	FmtMarker       [4]byte  // "fmt "
-	FmtLength       uint32   // Length of format chunk
-	FormatType      uint16   // Format type (1 = PCM)
-	NumChannels     uint16   // Number of channels
-	SampleRate      uint32   // Sample rate
-	ByteRate        uint32   // Byte rate
-	BlockAlign      uint16   // Block align
-	BitsPerSample   uint16   // Bits per sample
-	DataMarker      [4]byte  // "data"
-	DataSize        uint32   // Size of data chunk
-}
-
-// NewWAVSource creates a new WAV file audio source
-func NewWAVSource(filepath string) (*WAVSource, error) {
-	file, err := os.Open(filepath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open WAV file: %v", err)
-	}
-
-	var header wavHeader
-	if err := binary.Read(file, binary.LittleEndian, &header); err != nil {
-		file.Close()
-		return nil, fmt.Errorf("failed to read WAV header: %v", err)
-	}
-
-	// Validate WAV format
-	if string(header.RiffMarker[:]) != "RIFF" || 
-	   string(header.WaveMarker[:]) != "WAVE" || 
-	   string(header.FmtMarker[:]) != "fmt " || 
-	   header.FormatType != 1 { // PCM format
-		file.Close()
-		return nil, fmt.Errorf("unsupported WAV format or invalid WAV file")
-	}
-
-	// Find data chunk if not immediately following format chunk
-	if string(header.DataMarker[:]) != "data" {
-		// Skip until we find the data marker
-		marker := make([]byte, 4)
-		var dataSize uint32
-		for {
-			if _, err := file.Read(marker); err != nil {
-				file.Close()
-				return nil, fmt.Errorf("failed to find data chunk: %v", err)
-			}
-			if string(marker) == "data" {
-				// Read data size
-				if err := binary.Read(file, binary.LittleEndian, &dataSize); err != nil {
-					file.Close()
-					return nil, fmt.Errorf("failed to read data size: %v", err)
-				}
-				break
-			}
-			// Skip one byte and try again
-			if _, err := file.Seek(-3, io.SeekCurrent); err != nil {
-				file.Close()
-				return nil, fmt.Errorf("seek error: %v", err)
-			}
-		}
-		header.DataSize = dataSize
-	}
-
-	fmt.Printf("WAV details: %d Hz, %d channels, %d bits per sample\n", 
-		header.SampleRate, header.NumChannels, header.BitsPerSample)
-
-	// If sample rate doesn't match our expected rate, warn user
-	if header.SampleRate != sampleRate {
-		fmt.Printf("Warning: WAV sample rate (%d) differs from expected rate (%d). Results may be affected.\n",
-			header.SampleRate, sampleRate)
-	}
-
-	// If not 16-bit samples, warn user
-	if header.BitsPerSample != 16 {
-		fmt.Printf("Warning: WAV bits per sample (%d) is not 16-bit. Results may be affected.\n",
-			header.BitsPerSample)
-	}
-
-	// If not mono, warn user
-	if header.NumChannels != 1 {
-		fmt.Printf("Warning: WAV is not mono (%d channels). Only first channel will be used.\n",
-			header.NumChannels)
-	}
-
-	return &WAVSource{
-		file:         file,
-		header:       header,
-		bytesBuf:     make([]byte, framesPerBuffer*int(header.NumChannels)*bytesPerSample),
-		totalSamples: int(header.DataSize) / (int(header.NumChannels) * bytesPerSample),
-	}, nil
-}
-
-// ReadSamples reads audio samples from the WAV file
-func (w *WAVSource) ReadSamples(samples []int16) (int, error) {
-	// Read a chunk of WAV data
-	n, err := w.file.Read(w.bytesBuf)
-	if err != nil && err != io.EOF {
-		return 0, err
-	}
-	
-	if n == 0 || err == io.EOF {
-		return 0, io.EOF
-	}
-	
-	// If multi-channel, extract only the first channel
-	samplesRead := n / (int(w.header.NumChannels) * bytesPerSample)
-	
-	for i := 0; i < samplesRead; i++ {
-		// Read only the first channel's sample
-		lowByte := w.bytesBuf[i*int(w.header.NumChannels)*bytesPerSample]
-		highByte := w.bytesBuf[i*int(w.header.NumChannels)*bytesPerSample+1]
-		samples[i] = int16(binary.LittleEndian.Uint16([]byte{lowByte, highByte}))
-	}
-	
-	w.samplesRead += samplesRead
-	w.secondsPlayed = float64(w.samplesRead) / float64(sampleRate)
-	
-	// Display progress
-	totalSeconds := float64(w.totalSamples) / float64(sampleRate)
-	fmt.Printf("\rPlaying WAV: %.1fs / %.1fs (%.0f%%)", 
-		w.secondsPlayed, 
-		totalSeconds, 
-		(float64(w.samplesRead) / float64(w.totalSamples) * 100))
-	
-	// Simulate real-time pacing for WAV files
-	sleepDuration := time.Duration(samplesRead) * time.Second / time.Duration(sampleRate)
-	time.Sleep(sleepDuration)
-	
-	// If we didn't read a full buffer, pad with zeros
-	if samplesRead < len(samples) {
-		for i := samplesRead; i < len(samples); i++ {
-			samples[i] = 0
-		}
-	}
-	
-	return samplesRead, nil
-}
-
-// Close closes the WAV file
-func (w *WAVSource) Close() error {
-	fmt.Println() // Print newline after progress display
-	return w.file.Close()
-}
-
 // VAD state management
 type VADState struct {
 	active          bool // Whether speech is currently active
@@ -283,8 +119,7 @@ func (vad *VADState) reset() {
 }
 
 func main() {
-	// Parse command line arguments
-	wavFile := flag.String("file", "", "Path to WAV file (optional)")
+	// Parse command line arguments (keeping flag for compatibility)
 	flag.Parse()
 
 	// Establish gRPC connection
@@ -312,41 +147,23 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
-	// Initialize PortAudio if needed for mic
-	if *wavFile == "" {
-		if err := portaudio.Initialize(); err != nil {
-			log.Fatalf("portaudio init: %v", err)
-		}
-		defer portaudio.Terminate()
+	// Initialize PortAudio
+	if err := portaudio.Initialize(); err != nil {
+		log.Fatalf("portaudio init: %v", err)
 	}
+	defer portaudio.Terminate()
 
-	// Create appropriate audio source
-	var source AudioSource
-	var sourceType string
+	// Create microphone source
+	micSource, err := NewMicSource()
+	if err != nil {
+		log.Fatalf("Error creating microphone source: %v", err)
+	}
+	defer micSource.Close()
 	
-	if *wavFile != "" {
-		// Use WAV file source
-		wavSource, err := NewWAVSource(*wavFile)
-		if err != nil {
-			log.Fatalf("Error creating WAV source: %v", err)
-		}
-		source = wavSource
-		sourceType = "WAV File"
-		fmt.Printf("Streaming WAV file: %s\n", *wavFile)
-	} else {
-		// Use microphone source
-		micSource, err := NewMicSource()
-		if err != nil {
-			log.Fatalf("Error creating microphone source: %v", err)
-		}
-		source = micSource
-		sourceType = "Microphone"
-		fmt.Println("Streaming from microphone")
-	}
-	defer source.Close()
+	fmt.Println("Streaming from microphone")
 
-	// Process audio from the source
-	processAudio(stream, source, sourceType, sig)
+	// Process audio from the microphone
+	processAudio(stream, micSource, sig)
 
 	// Close the stream properly
 	stream.CloseSend()
@@ -354,9 +171,9 @@ func main() {
 	fmt.Println("Disconnected from server")
 }
 
-// Process audio from any source using the same VAD logic
-func processAudio(stream pb.WhisperService_StreamAudioClient, source AudioSource, sourceType string, sig chan os.Signal) {
-	fmt.Printf("=== Streaming from %s with VAD ===\n", sourceType)
+// Process audio from microphone using VAD logic
+func processAudio(stream pb.WhisperService_StreamAudioClient, source *MicSource, sig chan os.Signal) {
+	fmt.Println("=== Streaming from Microphone with VAD ===")
 	fmt.Println("Processing audio... (Press Ctrl+C to exit)")
 
 	// State for VAD and buffering
@@ -404,35 +221,8 @@ func processAudio(stream pb.WhisperService_StreamAudioClient, source AudioSource
 			
 			return
 		default:
-			// Read samples from the audio source
+			// Read samples from the microphone
 			n, err := source.ReadSamples(audioBuf)
-			if err == io.EOF {
-				// End of file reached
-				if vad.active {
-					// Send any remaining audio before the end marker
-					if len(accum) > 0 {
-						err := stream.Send(&pb.AudioChunk{
-							Data: accum,
-						})
-						if err != nil {
-							log.Printf("send final audio: %v", err)
-						}
-					}
-					
-					// Send speech end marker
-					err := stream.Send(&pb.AudioChunk{
-						SpeechEnd: true,
-					})
-					if err != nil {
-						log.Printf("send end marker: %v", err)
-					}
-					fmt.Println("\n[Speech ended]")
-				}
-				
-				fmt.Println("\nReached end of audio")
-				time.Sleep(2 * time.Second) // Wait for final transcripts
-				return
-			}
 			if err != nil {
 				log.Printf("read error: %v", err)
 				continue
@@ -622,9 +412,7 @@ func receiveTranscriptions(stream pb.WhisperService_StreamAudioClient) {
 }
 
 // calcRMS computes the root-mean-square of samples
-type sampleBuf = []int16
-
-func calcRMS(buf sampleBuf) float64 {
+func calcRMS(buf []int16) float64 {
 	if len(buf) == 0 {
 		return 0
 	}
