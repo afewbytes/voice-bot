@@ -4,9 +4,8 @@
 #include <vector>
 
 #include <grpcpp/grpcpp.h>
-
 #include "voice.grpc.pb.h"
-#include "llama.h"      // adjust path as needed
+#include "llama.h"  // adjust include path as needed
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -20,20 +19,17 @@ using voice::GenerateResponse;
 
 class LlamaServiceImpl final : public LlamaService::Service {
 public:
-  LlamaServiceImpl(const std::string &model_path) {
+  explicit LlamaServiceImpl(const std::string &model_path) {
     // 1) initialize backend
-    llama_backend_init();
+    ggml_backend_load_all();
 
-    // 2) load the model
+    // 2) load model
     llama_model_params mparams = llama_model_default_params();
     model_ = llama_model_load_from_file(model_path.c_str(), mparams);
     if (!model_) {
       std::cerr << "Failed to load LLaMA model: " << model_path << "\n";
       std::exit(1);
     }
-
-    // Grab the vocab for tokenization and piece conversion
-    vocab_ = llama_model_get_vocab(model_);
 
     // 3) create context
     llama_context_params cparams = llama_context_default_params();
@@ -45,81 +41,85 @@ public:
       llama_model_free(model_);
       std::exit(1);
     }
+
+    // 4) grab vocab from model
+    vocab_ = llama_model_get_vocab(model_);
+    if (!vocab_) {
+      std::cerr << "Failed to get vocab from model\n";
+      llama_free(context_);
+      llama_model_free(model_);
+      std::exit(1);
+    }
   }
 
-  ~LlamaServiceImpl() {
+  ~LlamaServiceImpl() override {
     if (context_)   llama_free(context_);
     if (model_)     llama_model_free(model_);
-    llama_backend_free();
   }
 
-  Status Generate(ServerContext* /*ctx*/,
-                  const GenerateRequest* req,
+  Status Generate(ServerContext* /*ctx*/, const GenerateRequest* req,
                   ServerWriter<GenerateResponse>* writer) override {
     const std::string prompt = req->prompt();
-    const int max_tokens     = req->max_tokens();
-    const float temp         = req->temperature();
-    const float top_p        = req->top_p();
+    const int max_tokens = req->max_tokens();
+    const float temp   = req->temperature();
+    const float top_p  = req->top_p();
 
-    // --- tokenize prompt on the vocab ---
-    int n_tokens = llama_tokenize(vocab_,
-                                  prompt.c_str(),
-                                  (int)prompt.size(),
-                                  nullptr, 0,
-                                  /*add_bos=*/true,
-                                  /*special=*/false);
-    if (n_tokens < 0) {
-      std::cerr << "tokenize length query\n";
+    // --- tokenize prompt (count tokens) ---
+    int n_tokens = -llama_tokenize(
+        vocab_, prompt.c_str(), (int)prompt.size(),
+        /*out*/ nullptr, /*buf_capacity=*/0,
+        /*add_bos=*/true, /*special=*/true  // enable special tokens
+    );
+    if (n_tokens <= 0) {
       return Status(grpc::StatusCode::INTERNAL, "tokenization failure");
     }
+    // actual tokenize
     std::vector<llama_token> tokens(n_tokens);
-    llama_tokenize(vocab_,
-                   prompt.c_str(),
-                   (int)prompt.size(),
-                   tokens.data(), n_tokens,
-                   /*add_bos=*/true,
-                   /*special=*/false);
-
-    // --- evaluate the prompt once ---
-    llama_batch batch = llama_batch_get_one(tokens.data(), n_tokens);
-    if (llama_decode(context_, batch) != 0) {
-      return Status(grpc::StatusCode::INTERNAL, "Failed to evaluate prompt");
+    if (llama_tokenize(
+            vocab_, prompt.c_str(), (int)prompt.size(),
+            tokens.data(), n_tokens,
+            /*add_bos=*/true, /*special=*/true  // match count call
+        ) < 0) {
+      return Status(grpc::StatusCode::INTERNAL, "tokenization failure");
     }
 
-    // --- set up a chain sampler ---
-    llama_sampler_chain_params schain = llama_sampler_chain_default_params();
-    schain.no_perf = false;
-    llama_sampler *sampler = llama_sampler_chain_init(schain);                          //  [oai_citation_attribution:0‡Fossies](https://fossies.org/linux/llama.cpp/examples/simple/simple.cpp)
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, /*min_keep=*/1));   //  [oai_citation_attribution:1‡GitHub](https://github.com/ggml-org/llama.cpp/blob/master/include/llama.h)
-    llama_sampler_chain_add(sampler, llama_sampler_init_temp(temp));                    //  [oai_citation_attribution:2‡GitHub](https://github.com/ggml-org/llama.cpp/blob/master/include/llama.h)
+    // --- evaluate prompt once ---
+    llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+    if (llama_decode(context_, batch) != 0) {
+      return Status(grpc::StatusCode::INTERNAL, "prompt evaluation failed");
+    }
+
+    // --- set up sampler chain (greedy only, per simple.cpp) ---
+    llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
+    sparams.no_perf = false;
+    llama_sampler *sampler = llama_sampler_chain_init(sparams);
+    llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 
     // --- streaming generation ---
     GenerateResponse resp;
     for (int i = 0; i < max_tokens; ++i) {
-      llama_token token_id = llama_sampler_sample(sampler, context_, /*idx=*/0);
+      // sample next token from last logits
+      llama_token token_id = llama_sampler_sample(sampler, context_, /*idx=*/-1);
       if (llama_vocab_is_eog(vocab_, token_id)) {
         break;
       }
-
-      // piece → string
       char buf[8];
       int pcsz = llama_token_to_piece(vocab_, token_id, buf, sizeof(buf), /*pad=*/0, /*special=*/true);
       std::string piece = (pcsz > 0 ? std::string(buf, pcsz) : "");
 
-      // send back
       resp.set_text(piece);
       resp.set_done(false);
       writer->Write(resp);
 
-      // feed token for next step
-      llama_batch next = llama_batch_get_one(&token_id, 1);
-      if (llama_decode(context_, next) != 0) {
+      // feed token for next decode
+      batch = llama_batch_get_one(&token_id, 1);
+      if (llama_decode(context_, batch) != 0) {
         llama_sampler_free(sampler);
-        return Status(grpc::StatusCode::INTERNAL, "Failed to decode token");
+        return Status(grpc::StatusCode::INTERNAL, "decoding failure");
       }
     }
 
-    // final EOS marker
+    // signal done
     resp.set_text("");
     resp.set_done(true);
     writer->Write(resp);
@@ -129,14 +129,14 @@ public:
   }
 
 private:
-  llama_model*   model_{nullptr};
-  llama_context* context_{nullptr};
+  llama_model*    model_{nullptr};
+  llama_context*  context_{nullptr};
   const llama_vocab* vocab_{nullptr};
 };
 
 int main(int argc, char** argv) {
   const std::string server_address("unix:///app/llama-sockets/llama.sock");
-  std::string model_path = "/app/models/llama-2-7b.Q4_K_M.gguf";
+  std::string model_path = "/app/models/llama-2-7b.gguf";
   if (argc > 1) {
     model_path = argv[1];
   }
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
   builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
 
-  std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+  std::unique_ptr<Server> server(builder.BuildAndStart());
   std::cout << "Llama server listening on " << server_address << "\n";
   server->Wait();
   return 0;

@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # 2) Clone llama.cpp into /app/llama.cpp
-ARG LLAMA_TAG=b5178
+ARG LLAMA_TAG=b5185
 RUN git clone --branch ${LLAMA_TAG} --depth 1 \
         https://github.com/ggml-org/llama.cpp.git /app/llama.cpp
 
@@ -42,4 +42,4 @@ RUN mkdir -p /app/llama_server/build && \
     make -j$(nproc)
 
 # 6) Pass model path directly as the first argument (no --model flag)
-CMD ["/app/llama_server/build/llama_server", "/app/models/llama-2-7b.Q4_K_M.gguf"]
+CMD ["/app/llama_server/build/llama_server", "/app/models/llama-2-7b.Q2_K.gguf"]
