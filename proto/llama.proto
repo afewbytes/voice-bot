@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package llama;
+
+// Keep the go_package option in sync with your build setup
+option go_package = "./proto;pb";
+
+service LlamaService {
+  // Client sends one request, server streams back generated text chunks
+  rpc Generate (GenerateRequest) returns (stream GenerateResponse);
+}
+
+message GenerateRequest {
+  string prompt      = 1;  // the text prompt to continue from
+  int32  max_tokens  = 2;  // maximum tokens to generate
+  float  temperature = 3;  // sampling temperature
+  float  top_p       = 4;  // nucleus (top-p) sampling
+}
+
+message GenerateResponse {
+  string text = 1;   // a piece of generated text
+  bool   done = 2;   // true on the final chunk
+}

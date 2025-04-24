@@ -1,3 +1,4 @@
+# docker-compose.yml
 version: '3.8'
 
 services:
@@ -8,12 +9,11 @@ services:
     volumes:
       - whisper-socket:/app/sockets
     ports:
-      - "8090:8090"  # Expose port for the gRPC server
+      - "8090:8090"       # gRPC API port
     depends_on:
       whisper:
         condition: service_healthy
     restart: on-failure
-    # The entrypoint doesn't need to change
     entrypoint: >
       /bin/sh -c "
       echo 'Waiting for whisper service to be ready...' &&
@@ -30,7 +30,6 @@ services:
       - whisper-models:/app/models
     environment:
       - WHISPER_MODEL=ggml-base.en.bin
-      # Force CPU mode to avoid GPU-related crashes
       - WHISPER_USE_GPU=0
     healthcheck:
       test: ["CMD", "test", "-f", "/app/sockets/ready"]
@@ -45,8 +44,27 @@ services:
           cpus: '4'
           memory: 5G
 
+  llama:
+    build:
+      context: .
+      dockerfile: llama_server/Dockerfile
+      args:
+        - LLAMA_MODEL=llama-2-7b.Q4_K_M.gguf
+    environment:
+      - LLAMA_MODEL=llama-2-7b.Q4_K_M.gguf
+    volumes:
+      - ./llama_models:/app/models
+    ports:
+      - "50051:50051"     # gRPC LLaMA port
+    depends_on:
+      api:
+        condition: service_started
+    restart: on-failure
+
 volumes:
   whisper-socket:
     driver: local
   whisper-models:
+    driver: local
+  llama-models:
     driver: local
