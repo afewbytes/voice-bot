@@ -17,6 +17,76 @@ using voice::LlamaService;
 using voice::GenerateRequest;
 using voice::GenerateResponse;
 
+// Function to run a simple startup test
+bool run_startup_test(llama_model* model, llama_context* context, const llama_vocab* vocab) {
+  std::cout << "Running startup test..." << std::endl;
+  
+  // Test prompt similar to what's used in simple.cpp
+  const std::string test_prompt = "Hello, my name is";
+  
+  // Tokenize the test prompt
+  int n_tokens = -llama_tokenize(
+      vocab, test_prompt.c_str(), (int)test_prompt.size(),
+      /*out*/ nullptr, /*buf_capacity=*/0,
+      /*add_bos=*/true, /*special=*/true
+  );
+  
+  if (n_tokens <= 0) {
+    std::cerr << "Startup test failed: Tokenization error" << std::endl;
+    return false;
+  }
+  
+  std::vector<llama_token> tokens(n_tokens);
+  if (llama_tokenize(
+          vocab, test_prompt.c_str(), (int)test_prompt.size(),
+          tokens.data(), n_tokens,
+          /*add_bos=*/true, /*special=*/true
+      ) < 0) {
+    std::cerr << "Startup test failed: Tokenization error" << std::endl;
+    return false;
+  }
+  
+  // Evaluate prompt
+  llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+  if (llama_decode(context, batch) != 0) {
+    std::cerr << "Startup test failed: Prompt evaluation error" << std::endl;
+    return false;
+  }
+  
+  // Sample a single token to verify generation works
+  llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
+  sparams.no_perf = false;
+  llama_sampler *sampler = llama_sampler_chain_init(sparams);
+  llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
+  
+  llama_token token_id = llama_sampler_sample(sampler, context, /*idx=*/-1);
+  
+  // Check if we got a valid token
+  if (token_id < 0 || llama_vocab_is_eog(vocab, token_id)) {
+    std::cerr << "Startup test failed: Could not generate a valid token" << std::endl;
+    llama_sampler_free(sampler);
+    return false;
+  }
+  
+  // Get the generated piece
+  char buf[8];
+  int pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), /*pad=*/0, /*special=*/true);
+  if (pcsz <= 0) {
+    std::cerr << "Startup test failed: Could not convert token to piece" << std::endl;
+    llama_sampler_free(sampler);
+    return false;
+  }
+  
+  std::string piece(buf, pcsz);
+  std::cout << "Startup test token generated: " << piece << std::endl;
+  
+  // Clean up
+  llama_sampler_free(sampler);
+  
+  std::cout << "Startup test completed successfully" << std::endl;
+  return true;
+}
+
 class LlamaServiceImpl final : public LlamaService::Service {
 public:
   explicit LlamaServiceImpl(const std::string &model_path) {
@@ -46,6 +116,14 @@ public:
     vocab_ = llama_model_get_vocab(model_);
     if (!vocab_) {
       std::cerr << "Failed to get vocab from model\n";
+      llama_free(context_);
+      llama_model_free(model_);
+      std::exit(1);
+    }
+
+    // 5) run startup test to verify model works
+    if (!run_startup_test(model_, context_, vocab_)) {
+      std::cerr << "Startup test failed. Exiting...\n";
       llama_free(context_);
       llama_model_free(model_);
       std::exit(1);
