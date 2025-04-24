@@ -23,6 +23,7 @@ bool run_startup_test(llama_model* model, llama_context* context, const llama_vo
   
   // Test prompt similar to what's used in simple.cpp
   const std::string test_prompt = "Hello, my name is";
+  std::cout << "Startup test prompt: \"" << test_prompt << "\"" << std::endl;
   
   // Tokenize the test prompt
   int n_tokens = -llama_tokenize(
@@ -53,23 +54,23 @@ bool run_startup_test(llama_model* model, llama_context* context, const llama_vo
     return false;
   }
   
-  // Sample a single token to verify generation works
+  // Sample a token to verify generation works
   llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
   sparams.no_perf = false;
   llama_sampler *sampler = llama_sampler_chain_init(sparams);
   llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
   
+  // Generate just one token first to test basic functionality
   llama_token token_id = llama_sampler_sample(sampler, context, /*idx=*/-1);
   
-  // Check if we got a valid token
   if (token_id < 0 || llama_vocab_is_eog(vocab, token_id)) {
     std::cerr << "Startup test failed: Could not generate a valid token" << std::endl;
     llama_sampler_free(sampler);
     return false;
   }
   
-  // Get the generated piece
-  char buf[8];
+  // Use a larger buffer for token_to_piece
+  char buf[16];
   int pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), /*pad=*/0, /*special=*/true);
   if (pcsz <= 0) {
     std::cerr << "Startup test failed: Could not convert token to piece" << std::endl;
@@ -77,13 +78,64 @@ bool run_startup_test(llama_model* model, llama_context* context, const llama_vo
     return false;
   }
   
-  std::string piece(buf, pcsz);
-  std::cout << "Startup test token generated: " << piece << std::endl;
+  std::string first_piece(buf, pcsz);
+  std::cout << "First token generated: \"" << first_piece << "\"" << std::endl;
+  
+  // If we successfully generated one token, try to generate a few more
+  std::string full_output = first_piece;
+  
+  // Reset context and re-evaluate the prompt + first token for clean generation
+  if (llama_decode(context, batch) != 0) {
+    std::cerr << "Startup test failed: Could not reset context" << std::endl;
+    llama_sampler_free(sampler);
+    return false;
+  }
+  
+  // Feed the first token
+  batch = llama_batch_get_one(&token_id, 1);
+  if (llama_decode(context, batch) != 0) {
+    std::cerr << "Startup test failed: Decoding error" << std::endl;
+    llama_sampler_free(sampler);
+    return false;
+  }
+  
+  // Now generate a few more tokens, but don't fail the test if they have issues
+  const int more_tokens = 2; // Generate only 2 more tokens for safety
+  std::cout << "Generating " << more_tokens << " more tokens: ";
+  bool generation_complete = false;
+  
+  for (int i = 0; i < more_tokens && !generation_complete; ++i) {
+    token_id = llama_sampler_sample(sampler, context, /*idx=*/-1);
+    
+    if (token_id < 0 || llama_vocab_is_eog(vocab, token_id)) {
+      std::cout << "[end]";
+      generation_complete = true;
+      continue;
+    }
+    
+    pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), /*pad=*/0, /*special=*/true);
+    if (pcsz <= 0) {
+      std::cout << "[invalid]";
+      continue;
+    }
+    
+    std::string piece(buf, pcsz);
+    std::cout << piece;
+    full_output += piece;
+    
+    batch = llama_batch_get_one(&token_id, 1);
+    if (llama_decode(context, batch) != 0) {
+      std::cout << "[error]";
+      break;
+    }
+  }
+  
+  std::cout << std::endl;
+  std::cout << "Startup test completed successfully" << std::endl;
   
   // Clean up
   llama_sampler_free(sampler);
   
-  std::cout << "Startup test completed successfully" << std::endl;
   return true;
 }
 
