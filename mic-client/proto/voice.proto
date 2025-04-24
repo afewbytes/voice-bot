@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package voice;
+
+// Keep the go_package option
+option go_package = "./proto;pb";
+
+// Audio → Transcript + Generation
+service WhisperService {
+  // Client streams AudioChunk → server, server streams back StreamAudioResponse
+  rpc StreamAudio (stream AudioChunk) returns (stream StreamAudioResponse);
+}
+
+message AudioChunk {
+  bytes data         = 1;
+  bool   speech_start = 2;
+  bool   speech_end   = 3;
+}
+
+// Combined response for both Whisper and Llama outputs
+message StreamAudioResponse {
+  enum Source {
+    WHISPER = 0;  // comes from the transcription service
+    LLAMA   = 1;  // comes from the text-generation service
+  }
+
+  string text   = 1;        // partial transcription or generated text
+  bool   done   = 2;        // true on the final chunk (from Llama)
+  Source source = 3;        // which service produced this message
+}
+
+// (Optional) You can keep Transcription if used elsewhere
+message Transcription {
+  string text = 1;
+}
+
+service LlamaService {
+  rpc Generate (GenerateRequest) returns (stream GenerateResponse);
+}
+
+message GenerateRequest {
+  string prompt      = 1;
+  int32  max_tokens  = 2;
+  float  temperature = 3;
+  float  top_p       = 4;
+}
+
+message GenerateResponse {
+  string text = 1;
+  bool   done = 2;
+}

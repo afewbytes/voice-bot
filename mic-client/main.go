@@ -386,6 +386,10 @@ func processAudio(stream pb.WhisperService_StreamAudioClient, source *MicSource,
 
 // receiveTranscriptions reads and displays transcripts from the gRPC stream
 func receiveTranscriptions(stream pb.WhisperService_StreamAudioClient) {
+	// Current state of displayed transcripts
+	var currentWhisperText string
+	var currentLlamaText string
+
 	for {
 		resp, err := stream.Recv()
 		if err == io.EOF {
@@ -396,17 +400,41 @@ func receiveTranscriptions(stream pb.WhisperService_StreamAudioClient) {
 			return
 		}
 
-		// Clear the current line and move to start
+		// Get text from response
+		text := resp.GetText()
+		if text == "" {
+			continue
+		}
+
+		// Clear the current line and prepare to display
 		fmt.Print("\r\033[K")  // \r moves cursor to start of line, \033[K clears to end of line
 		
-		// Print the transcription with a prefix
-		text := resp.GetText()
-		if text != "" {
-			fmt.Print("TRANSCRIPT: " + text)
-			// If it doesn't end with a newline, add one
-			if len(text) > 0 && text[len(text)-1] != '\n' {
-				fmt.Println()
+		// Handle different sources
+		switch resp.GetSource() {
+		case pb.StreamAudioResponse_WHISPER:
+			// Update transcription text
+			currentWhisperText = text
+			// Print transcription with prefix
+			fmt.Print("TRANSCRIPT: " + currentWhisperText)
+			
+		case pb.StreamAudioResponse_LLAMA:
+			// Update or append to current Llama text
+			if resp.GetDone() {
+				// Final Llama response
+				currentLlamaText += text
+				fmt.Print("\nLLAMA (final): " + currentLlamaText)
+				// Reset after final response
+				currentLlamaText = ""
+			} else {
+				// Accumulate partial Llama response
+				currentLlamaText += text
+				fmt.Print("\nLLAMA: " + currentLlamaText)
 			}
+		}
+
+		// Add newline if needed
+		if len(text) > 0 && text[len(text)-1] != '\n' {
+			fmt.Println()
 		}
 	}
 }
