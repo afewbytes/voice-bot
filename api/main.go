@@ -15,7 +15,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -49,10 +48,7 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 	defer whisperStream.CloseSend()
 	log.Println("Successfully opened stream to Whisper service")
 
-	// Buffer for the full transcription
-	var fullTranscription strings.Builder
-
-	// 2) Relay Whisper → client & accumulate text
+	// 2) Relay Whisper → client & call LLaMA for each segment
 	log.Println("Starting Whisper response relay...")
 	errCh := make(chan error, 1)
 	go func() {
@@ -74,7 +70,13 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 			transcriptionSegments++
 			log.Printf("Received Whisper segment #%d: %q", transcriptionSegments, transcriptionText)
 
-			// Send partial transcription
+			// Skip empty transcriptions
+			if strings.TrimSpace(transcriptionText) == "" {
+				log.Println("Skipping empty transcription segment")
+				continue
+			}
+
+			// Send partial transcription to client
 			if err := stream.Send(&pb.StreamAudioResponse{
 				Text:   transcriptionText,
 				Source: pb.StreamAudioResponse_WHISPER,
@@ -84,9 +86,62 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				return
 			}
 
-			// Accumulate into full transcription buffer
-			fullTranscription.WriteString(transcriptionText)
-			fullTranscription.WriteRune(' ')
+			// Call LLaMA with this segment
+			log.Printf("Calling LLaMA with segment: %q", transcriptionText)
+			llamaReq := &pb.GenerateRequest{
+				Prompt:      transcriptionText,
+				MaxTokens:   128, // Reduced max tokens for each segment
+				Temperature: 0.7,
+				TopP:        0.9,
+			}
+			
+			// Process response from LLaMA
+			llamaStream, err := s.llamaClient.Generate(ctx, llamaReq)
+			if err != nil {
+				log.Printf("WARNING: Failed to call LLaMA for segment: %v", err)
+				continue // Continue with next segment even if this one fails
+			}
+			
+			// Stream LLaMA tokens to client
+			tokenCount := 0
+			for {
+				genResp, err := llamaStream.Recv()
+				if err == io.EOF {
+					log.Printf("LLaMA stream for segment #%d ended (EOF) after %d tokens", 
+						transcriptionSegments, tokenCount)
+					break
+				}
+				if err != nil {
+					log.Printf("WARNING: Error receiving from LLaMA for segment #%d: %v", 
+						transcriptionSegments, err)
+					break
+				}
+
+				tokenText := genResp.GetText()
+				isDone := genResp.GetDone()
+				tokenCount++
+				
+				if tokenCount%20 == 0 {
+					log.Printf("Received %d LLaMA tokens for segment #%d", 
+						tokenCount, transcriptionSegments)
+				}
+
+				// Send token to client
+				if err := stream.Send(&pb.StreamAudioResponse{
+					Text:   tokenText,
+					Done:   isDone,
+					Source: pb.StreamAudioResponse_LLAMA,
+				}); err != nil {
+					log.Printf("ERROR: Failed to send LLaMA token to client: %v", err)
+					errCh <- err
+					return
+				}
+				
+				if isDone {
+					log.Printf("LLaMA generation for segment #%d complete", transcriptionSegments)
+					break
+				}
+			}
 		}
 	}()
 
@@ -129,106 +184,6 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 	}
 	log.Println("Whisper processing completed successfully")
 
-	// 4) Call Llama with the full transcription
-	prompt := fullTranscription.String()
-	prompt = strings.TrimSpace(prompt)
-	log.Printf("Full transcription (%d chars): %q", len(prompt), prompt)
-	
-	if len(prompt) == 0 {
-		log.Println("WARNING: Empty transcription, not sending to LLaMA")
-		return nil
-	}
-
-	// Test LLaMA connection status
-	log.Println("Testing LLaMA connection...")
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	ping := &pb.GenerateRequest{
-		Prompt:      "test",
-		MaxTokens:   1,
-		Temperature: 0.0,
-	}
-	pingStream, pingErr := s.llamaClient.Generate(timeoutCtx, ping)
-	if pingErr != nil {
-		log.Printf("ERROR: LLaMA connection test failed: %v", pingErr)
-		st, ok := status.FromError(pingErr)
-		if ok {
-			log.Printf("gRPC status code: %v, message: %v", st.Code(), st.Message())
-		}
-	} else {
-		log.Println("LLaMA connection test succeeded")
-		// Drain the ping response 
-		for {
-			_, err := pingStream.Recv()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				log.Printf("WARNING: Error reading ping response: %v", err)
-				break
-			}
-		}
-	}
-
-	// Prepare LLaMA request
-	log.Printf("Preparing LLaMA request with %d tokens max", 256)
-	llamaReq := &pb.GenerateRequest{
-		Prompt:      prompt,
-		MaxTokens:   256,
-		Temperature: 0.7,
-		TopP:        0.9,
-	}
-	
-	// Call LLaMA for generation
-	log.Println("Sending prompt to LLaMA for generation...")
-	llamaStream, err := s.llamaClient.Generate(ctx, llamaReq)
-	if err != nil {
-		log.Printf("ERROR: Failed to start LLaMA generation: %v", err)
-		st, ok := status.FromError(err)
-		if ok {
-			log.Printf("gRPC status code: %v, message: %v", st.Code(), st.Message())
-		}
-		return err
-	}
-	log.Println("Successfully started LLaMA generation")
-
-	// 5) Stream Llama → client
-	log.Println("Streaming LLaMA responses to client...")
-	tokenCount := 0
-	for {
-		log.Println("Waiting for next LLaMA token...")
-		genResp, err := llamaStream.Recv()
-		if err == io.EOF {
-			log.Printf("LLaMA stream ended (EOF) after %d tokens", tokenCount)
-			break
-		}
-		if err != nil {
-			log.Printf("ERROR: Failed to receive from LLaMA stream: %v", err)
-			return err
-		}
-
-		tokenText := genResp.GetText()
-		isDone := genResp.GetDone()
-		tokenCount++
-		
-		log.Printf("Received LLaMA token #%d: %q (done=%v)", tokenCount, tokenText, isDone)
-
-		if err := stream.Send(&pb.StreamAudioResponse{
-			Text:   tokenText,
-			Done:   isDone,
-			Source: pb.StreamAudioResponse_LLAMA,
-		}); err != nil {
-			log.Printf("ERROR: Failed to send LLaMA token to client: %v", err)
-			return err
-		}
-		
-		if isDone {
-			log.Println("LLaMA indicated generation is complete")
-			break
-		}
-	}
-
-	log.Printf("Completed LLaMA generation (%d tokens); closing stream", tokenCount)
 	return nil
 }
 

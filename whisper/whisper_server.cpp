@@ -148,8 +148,8 @@ grpc::Status WhisperServiceImpl::StreamAudio(
         wparams.prompt_tokens   = prompt_tokens.empty() ? nullptr : prompt_tokens.data();
         
         if (prompt_tokens.size() > 0) {
-            LOG_DEBUG("Session " << session_id << ": Using " << prompt_tokens.size() 
-                    << " context tokens");
+            /*LOG_DEBUG("Session " << session_id << ": Using " << prompt_tokens.size() 
+                    << " context tokens");*/
         }
         
         if (whisper_full(ctx, wparams, audio_buffer.data(), audio_buffer.size()) != 0) {
@@ -222,10 +222,10 @@ grpc::Status WhisperServiceImpl::StreamAudio(
     voice::AudioChunk chunk;
     while (stream->Read(&chunk)) {
         // Print marker status for every chunk
-        LOG_DEBUG("Session " << session_id << ": Received chunk - speech_start: " 
+        /*LOG_DEBUG("Session " << session_id << ": Received chunk - speech_start: " 
                  << (chunk.speech_start() ? "true" : "false") 
                  << ", speech_end: " << (chunk.speech_end() ? "true" : "false")
-                 << ", data size: " << chunk.data().size() << " bytes");
+                 << ", data size: " << chunk.data().size() << " bytes");*/
                  
         // Check for speech boundary markers
         if (chunk.speech_start()) {
@@ -266,9 +266,9 @@ grpc::Status WhisperServiceImpl::StreamAudio(
                 size_t prev_size = audio_buffer.size();
                 audio_buffer.insert(audio_buffer.end(), data.begin(), data.end());
                 
-                LOG_DEBUG("Session " << session_id << ": Added " << data.size() 
+                /*LOG_DEBUG("Session " << session_id << ": Added " << data.size() 
                          << " samples to buffer, now " << audio_buffer.size() 
-                         << " samples");
+                         << " samples");*/
                 
                 // If buffer gets too large, process intermediate results
                 if (audio_buffer.size() * sizeof(float) > MAX_AUDIO_BUFFER / 4) {
