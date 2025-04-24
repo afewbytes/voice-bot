@@ -1,4 +1,3 @@
-// whisper_server.h
 #ifndef WHISPER_SERVICE_H
 #define WHISPER_SERVICE_H
 
@@ -43,23 +42,15 @@ private:
     std::queue<whisper_context*> pool_;
 };
 
-// Service implementation: streams combined responses (transcription + generation)
 class WhisperServiceImpl final : public voice::WhisperService::Service {
 public:
     explicit WhisperServiceImpl(WhisperContextPool& p);
-    grpc::Status StreamAudio(
-        grpc::ServerContext* ctx,
-        grpc::ServerReaderWriter<
-            voice::StreamAudioResponse,
-            voice::AudioChunk
-        >* stream
-    ) override;
-
+    grpc::Status StreamAudio(grpc::ServerContext* ctx,
+                       grpc::ServerReaderWriter<voice::StreamAudioResponse, voice::AudioChunk>* stream) override;
 private:
     WhisperContextPool& pool_;
 };
 
-// Utility functions for socket lifecycle
 void cleanup_socket();
 void RunServer();
 
