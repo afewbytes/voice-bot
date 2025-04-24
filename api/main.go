@@ -35,6 +35,12 @@ const (
 	idleTimeout = 30 * time.Second // Connection idle timeout
 )
 
+// Protocol markers for speech boundaries (must match client markers)
+var (
+	speechStartMarker = []byte{0xFF, 0x00, 0x00, 0x01} // Unique marker for speech start
+	speechEndMarker   = []byte{0xFF, 0x00, 0x00, 0x02} // Unique marker for speech end
+)
+
 // Connection state
 type connState struct {
 	accumBuffer  bytes.Buffer                        // Buffer for accumulating audio data
@@ -146,7 +152,7 @@ func handleAudioConnection(conn net.Conn, client pb.WhisperServiceClient) {
 			if n > 0 {
 				// Check if we detect VAD markers in the stream
 				data := readBuf[:n]
-				state.processAudioChunk(data, client)
+				state.processAudioChunk(data)
 				dataCh <- struct{}{}
 			}
 		}()
@@ -174,27 +180,67 @@ func handleAudioConnection(conn net.Conn, client pb.WhisperServiceClient) {
 	}
 }
 
-// Process audio data and look for patterns that suggest VAD markers
-func (s *connState) processAudioChunk(data []byte, client pb.WhisperServiceClient) {
-	// We could inspect audio data to detect VAD markers, but the VAD client
-	// is already handling speech detection. We'll focus on efficiently handling
-	// the data it sends us.
+// Process audio data and check for speech boundary markers
+func (s *connState) processAudioChunk(data []byte) {
+	// Check for speech start marker
+	if bytes.Equal(data, speechStartMarker) {
+		log.Println("Speech start marker detected")
 
-	// Add the new data to our buffer
-	s.accumBuffer.Write(data)
-
-	// If we have accumulated enough data, send it to the whisper service
-	// This allows for more efficient batching while still preserving
-	// the speech segments detected by the VAD client
-	if s.accumBuffer.Len() >= 32*1024 { // 32KB threshold for sending
-		audioData := s.accumBuffer.Bytes()
-		err := s.stream.Send(&pb.AudioChunk{Data: audioData})
-		if err != nil {
-			log.Printf("Error sending audio chunk: %v", err)
-			return
+		// Flush any existing audio
+		if s.accumBuffer.Len() > 0 {
+			s.sendAccumulatedAudio(false, false)
 		}
 
-		// Reset buffer after sending
+		// Send speech start marker to whisper service
+		err := s.stream.Send(&pb.AudioChunk{
+			Data:        nil,
+			SpeechStart: true,
+		})
+		if err != nil {
+			log.Printf("Error sending speech start marker: %v", err)
+		}
+
+		s.isActive = true
+		return
+	}
+
+	// Check for speech end marker
+	if bytes.Equal(data, speechEndMarker) {
+		log.Println("Speech end marker detected")
+
+		// Send any accumulated audio with speech end flag
+		s.sendAccumulatedAudio(false, true)
+
+		s.isActive = false
+		return
+	}
+
+	// Regular audio data - add to buffer
+	s.accumBuffer.Write(data)
+
+	// Send accumulated audio if buffer gets large enough
+	if s.accumBuffer.Len() >= 32*1024 {
+		s.sendAccumulatedAudio(false, false)
+	}
+}
+
+// Helper to send accumulated audio with appropriate flags
+func (s *connState) sendAccumulatedAudio(speechStart bool, speechEnd bool) {
+	if s.accumBuffer.Len() == 0 {
+		return
+	}
+
+	// Send the audio with appropriate flags
+	err := s.stream.Send(&pb.AudioChunk{
+		Data:        s.accumBuffer.Bytes(),
+		SpeechStart: speechStart,
+		SpeechEnd:   speechEnd,
+	})
+
+	if err != nil {
+		log.Printf("Error sending audio chunk: %v", err)
+	} else {
+		// Reset buffer after successful send
 		s.accumBuffer.Reset()
 	}
 }

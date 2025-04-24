@@ -32,6 +32,12 @@ const (
 	initialAdapt     = 30    // Number of initial frames for noise profile
 )
 
+// Protocol markers for speech boundaries
+var (
+	speechStartMarker = []byte{0xFF, 0x00, 0x00, 0x01} // Unique marker for speech start
+	speechEndMarker   = []byte{0xFF, 0x00, 0x00, 0x02} // Unique marker for speech end
+)
+
 // VAD state management
 type VADState struct {
 	active          bool // Whether speech is currently active
@@ -184,6 +190,12 @@ loop:
 					vad.active = true
 					fmt.Println("[Speech detected]")
 
+					// Send speech start marker
+					if _, err := conn.Write(speechStartMarker); err != nil {
+						log.Printf("send start marker: %v", err)
+						break loop
+					}
+
 					// Add preroll buffer to accumulator
 					for i := 0; i < preRollFrames; i++ {
 						idx := (prerollIndex + i) % preRollFrames
@@ -220,7 +232,19 @@ loop:
 							accum = accum[:0] // Discard too short utterances
 						} else {
 							fmt.Println("[Speech ended]")
-							// Final packet will be sent below
+
+							// Send any remaining audio before the end marker
+							if len(accum) > 0 {
+								if _, err := conn.Write(accum); err != nil {
+									log.Printf("send final audio: %v", err)
+								}
+								accum = accum[:0]
+							}
+
+							// Send speech end marker
+							if _, err := conn.Write(speechEndMarker); err != nil {
+								log.Printf("send end marker: %v", err)
+							}
 						}
 
 						vad.active = false
@@ -244,12 +268,6 @@ loop:
 					accum = accum[:0]
 					lastSend = time.Now()
 				}
-			} else if len(accum) > 0 {
-				// Send final packet after speech ends
-				if _, err := conn.Write(accum); err != nil {
-					log.Printf("send audio: %v", err)
-				}
-				accum = accum[:0]
 			}
 		}
 	}
