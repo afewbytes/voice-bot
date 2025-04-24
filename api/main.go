@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	pb "voice-bot/proto"
@@ -18,33 +19,35 @@ const (
 	// Server configuration
 	listenAddr      = ":8090"
 	whisperSockPath = "unix:///app/sockets/whisper.sock"
+	llamaSockPath   = "unix:///app/llama-sockets/llama.sock"
 )
 
 // WhisperServiceServer implements the gRPC server for WhisperService
+// It orchestrates between WhisperService (transcription) and LlamaService (generation)
 type WhisperServiceServer struct {
 	pb.UnimplementedWhisperServiceServer
 	whisperClient pb.WhisperServiceClient
+	llamaClient   pb.LlamaServiceClient
 }
 
-// StreamAudio implements the gRPC StreamAudio method
+// StreamAudio handles a bi-directional stream: audio chunks in, transcript + generation out
 func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioServer) error {
 	log.Println("New gRPC client connected")
-	
-	// Use the stream's context
+
 	ctx := stream.Context()
-	
-	// Create a stream to the whisper service
+
+	// 1) Open a stream to Whisper
 	whisperStream, err := s.whisperClient.StreamAudio(ctx)
 	if err != nil {
-		log.Printf("Failed to create whisper stream: %v", err)
 		return err
 	}
 	defer whisperStream.CloseSend()
-	
-	// Channel to collect errors from goroutines
+
+	// Buffer for the full transcription
+	var fullTranscription strings.Builder
+
+	// 2) Relay Whisper → client & accumulate text
 	errCh := make(chan error, 1)
-	
-	// Start goroutine to forward responses from whisper service back to client
 	go func() {
 		for {
 			resp, err := whisperStream.Recv()
@@ -53,101 +56,123 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				return
 			}
 			if err != nil {
-				log.Printf("Error receiving from whisper: %v", err)
 				errCh <- err
 				return
 			}
-			
-			// Send transcription to client
-			if err := stream.Send(resp); err != nil {
-				log.Printf("Error sending to client: %v", err)
+
+			// Send partial transcription
+			if err := stream.Send(&pb.StreamAudioResponse{
+				Text:   resp.GetText(),
+				Source: pb.StreamAudioResponse_WHISPER,
+			}); err != nil {
 				errCh <- err
 				return
 			}
-			
-			log.Printf("Sent transcription: %s", resp.GetText())
+
+			// Accumulate into full transcription buffer
+			fullTranscription.WriteString(resp.GetText())
+			fullTranscription.WriteRune(' ')
 		}
 	}()
-	
-	// Process incoming audio chunks from client
+
+	// 3) Forward incoming audio chunks from client → Whisper
 	for {
 		chunk, err := stream.Recv()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			log.Printf("Error receiving from client: %v", err)
 			return err
 		}
-		
-		// Log speech markers
-		if chunk.SpeechStart {
-			log.Println("Speech start marker received")
-		}
-		if chunk.SpeechEnd {
-			log.Println("Speech end marker received")
-		}
-		
-		// Forward the chunk to whisper service
 		if err := whisperStream.Send(chunk); err != nil {
-			log.Printf("Error forwarding to whisper: %v", err)
 			return err
-		}
-		
-		// Log data size if present
-		if len(chunk.Data) > 0 {
-			log.Printf("Forwarded %d bytes of audio data", len(chunk.Data))
 		}
 	}
-	
-	// Wait for transcription goroutine to complete
+	// Wait for the whisper goroutine to finish
 	if err := <-errCh; err != nil {
 		return err
 	}
-	
-	log.Println("Client disconnected")
+
+	// 4) Call Llama with the full transcription
+	prompt := fullTranscription.String()
+	log.Printf("Full transcription: %q", prompt)
+
+	llamaReq := &pb.GenerateRequest{
+		Prompt:      prompt,
+		MaxTokens:   256,
+		Temperature: 0.7,
+		TopP:        0.9,
+	}
+	llamaStream, err := s.llamaClient.Generate(ctx, llamaReq)
+	if err != nil {
+		return err
+	}
+
+	// 5) Stream Llama → client
+	for {
+		genResp, err := llamaStream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		if err := stream.Send(&pb.StreamAudioResponse{
+			Text:   genResp.GetText(),
+			Done:   genResp.GetDone(),
+			Source: pb.StreamAudioResponse_LLAMA,
+		}); err != nil {
+			return err
+		}
+	}
+
+	log.Println("Completed Llama generation; closing stream")
 	return nil
 }
 
 func main() {
-	// Connect to whisper service
-	conn, err := grpc.Dial(whisperSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Dial Whisper
+	wConn, err := grpc.Dial(whisperSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("Failed to connect to whisper service: %v", err)
+		log.Fatalf("Failed to connect to Whisper: %v", err)
 	}
-	defer conn.Close()
-	whisperClient := pb.NewWhisperServiceClient(conn)
+	defer wConn.Close()
+	whisperClient := pb.NewWhisperServiceClient(wConn)
 
-	log.Println("=== gRPC Whisper Audio Server ===")
-	log.Println("Connected to whisper service:", whisperSockPath)
+	// Dial Llama
+	lConn, err := grpc.Dial(llamaSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("Failed to connect to Llama: %v", err)
+	}
+	defer lConn.Close()
+	llamaClient := pb.NewLlamaServiceClient(lConn)
 
-	// Create gRPC server
+	log.Println("=== gRPC Audio Orchestrator ===")
+	log.Println("Whisper at", whisperSockPath, "  Llama at", llamaSockPath)
+
 	grpcServer := grpc.NewServer()
 	pb.RegisterWhisperServiceServer(grpcServer, &WhisperServiceServer{
 		whisperClient: whisperClient,
+		llamaClient:   llamaClient,
 	})
 
-	// Listen for gRPC connections
 	lis, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
-	defer lis.Close()
-	
-	log.Println("Listening on", listenAddr, "for gRPC clients")
+	log.Println("Listening on", listenAddr)
 
-	// Handle graceful shutdown
+	// Graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	
 	go func() {
 		<-sigCh
-		log.Println("Shutting down gRPC server")
+		log.Println("Shutting down")
 		grpcServer.GracefulStop()
 	}()
 
-	// Serve gRPC requests
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
+		log.Fatalf("Serve error: %v", err)
 	}
 }

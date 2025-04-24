@@ -5,7 +5,7 @@
 
 #include <grpcpp/grpcpp.h>
 
-#include "llama.grpc.pb.h"
+#include "voice.grpc.pb.h"
 #include "llama.h"      // adjust path as needed
 
 using grpc::Server;
@@ -14,9 +14,9 @@ using grpc::ServerContext;
 using grpc::Status;
 using grpc::ServerWriter;
 
-using llama::LlamaService;
-using llama::GenerateRequest;
-using llama::GenerateResponse;
+using voice::LlamaService;
+using voice::GenerateRequest;
+using voice::GenerateResponse;
 
 class LlamaServiceImpl final : public LlamaService::Service {
 public:
@@ -135,7 +135,7 @@ private:
 };
 
 int main(int argc, char** argv) {
-  const std::string server_address("0.0.0.0:50051");
+  const std::string server_address("unix:///app/llama-sockets/llama.sock");
   std::string model_path = "/app/models/llama-2-7b.Q4_K_M.gguf";
   if (argc > 1) {
     model_path = argv[1];

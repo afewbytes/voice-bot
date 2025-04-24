@@ -1,3 +1,4 @@
+// whisper_server.h
 #ifndef WHISPER_SERVICE_H
 #define WHISPER_SERVICE_H
 
@@ -9,7 +10,7 @@
 #include <condition_variable>
 #include <queue>
 #include <grpcpp/grpcpp.h>
-#include "whisper.grpc.pb.h"
+#include "voice.grpc.pb.h"
 #include "whisper.h"
 
 // Flag to enable more verbose logging for debugging
@@ -42,15 +43,23 @@ private:
     std::queue<whisper_context*> pool_;
 };
 
-class WhisperServiceImpl final : public whisper::WhisperService::Service {
+// Service implementation: streams combined responses (transcription + generation)
+class WhisperServiceImpl final : public voice::WhisperService::Service {
 public:
     explicit WhisperServiceImpl(WhisperContextPool& p);
-    grpc::Status StreamAudio(grpc::ServerContext* ctx,
-                       grpc::ServerReaderWriter<whisper::Transcription, whisper::AudioChunk>* stream) override;
+    grpc::Status StreamAudio(
+        grpc::ServerContext* ctx,
+        grpc::ServerReaderWriter<
+            voice::StreamAudioResponse,
+            voice::AudioChunk
+        >* stream
+    ) override;
+
 private:
     WhisperContextPool& pool_;
 };
 
+// Utility functions for socket lifecycle
 void cleanup_socket();
 void RunServer();
 

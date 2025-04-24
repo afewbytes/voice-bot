@@ -24,8 +24,8 @@ add_compile_definitions(
 # Build our server
 add_executable(whisper_server
     whisper_server.cpp
-    proto/whisper.pb.cc
-    proto/whisper.grpc.pb.cc
+    proto/voice.pb.cc
+    proto/voice.grpc.pb.cc
 )
 
 target_compile_options(whisper_server PRIVATE -O3 -fPIC)

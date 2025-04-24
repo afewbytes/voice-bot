@@ -34,7 +34,7 @@ RUN cd /app/proto && \
       --cpp_out=. \
       --grpc_out=. \
       --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) \
-      llama.proto
+      voice.proto
 
 # 5) Build llama_server (this will also add_subdirectory(/app/llama.cpp))
 RUN mkdir -p /app/llama_server/build && \

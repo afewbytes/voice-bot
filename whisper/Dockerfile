@@ -32,7 +32,7 @@ COPY proto/ /app/proto/
 
 # Generate gRPC bindings
 RUN protoc --proto_path=/app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
-    --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` /app/proto/whisper.proto
+    --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` /app/proto/voice.proto
 
 # Enable core dumps (optional)
 RUN ulimit -c unlimited

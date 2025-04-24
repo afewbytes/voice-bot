@@ -21,7 +21,7 @@ COPY api/ .
 COPY proto/ /app/proto/
 
 # Generate Go gRPC code from proto
-RUN protoc --go_out=. --go-grpc_out=. --proto_path=/app/proto /app/proto/whisper.proto
+RUN protoc --go_out=. --go-grpc_out=. --proto_path=/app/proto /app/proto/voice.proto
 
 # Build the Go app
 RUN go mod tidy

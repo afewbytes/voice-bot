@@ -24,8 +24,8 @@ add_compile_definitions(
 # 3) build the server executable
 add_executable(llama_server
     llama_server.cpp
-    ../proto/llama.pb.cc
-    ../proto/llama.grpc.pb.cc
+    ../proto/voice.pb.cc
+    ../proto/voice.grpc.pb.cc
 )
 
 target_compile_options(llama_server PRIVATE -O3 -fPIC)
