@@ -210,7 +210,15 @@ public:
     llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
     sparams.no_perf = false;
     llama_sampler *sampler = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
+
+    // Add top-k first to ensure we have enough candidates
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));  // Use a reasonable k value like 40
+
+    // Then add top-p with min_keep=1 to ensure at least one token is always kept
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
+
+    // Finally add temperature sampling
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(temp));
 
     GenerateResponse resp;
     for (int i = 0; i < max_tokens; ++i) {

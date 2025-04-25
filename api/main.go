@@ -94,25 +94,25 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				Temperature: 0.7,
 				TopP:        0.9,
 			}
-			
+
 			// Process response from LLaMA
 			llamaStream, err := s.llamaClient.Generate(ctx, llamaReq)
 			if err != nil {
 				log.Printf("WARNING: Failed to call LLaMA for segment: %v", err)
 				continue // Continue with next segment even if this one fails
 			}
-			
+
 			// Stream LLaMA tokens to client
 			tokenCount := 0
 			for {
 				genResp, err := llamaStream.Recv()
 				if err == io.EOF {
-					log.Printf("LLaMA stream for segment #%d ended (EOF) after %d tokens", 
+					log.Printf("LLaMA stream for segment #%d ended (EOF) after %d tokens",
 						transcriptionSegments, tokenCount)
 					break
 				}
 				if err != nil {
-					log.Printf("WARNING: Error receiving from LLaMA for segment #%d: %v", 
+					log.Printf("WARNING: Error receiving from LLaMA for segment #%d: %v",
 						transcriptionSegments, err)
 					break
 				}
@@ -120,9 +120,9 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				tokenText := genResp.GetText()
 				isDone := genResp.GetDone()
 				tokenCount++
-				
+
 				if tokenCount%20 == 0 {
-					log.Printf("Received %d LLaMA tokens for segment #%d", 
+					log.Printf("Received %d LLaMA tokens for segment #%d",
 						tokenCount, transcriptionSegments)
 				}
 
@@ -136,7 +136,7 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 					errCh <- err
 					return
 				}
-				
+
 				if isDone {
 					log.Printf("LLaMA generation for segment #%d complete", transcriptionSegments)
 					break
@@ -162,14 +162,14 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 		if audioChunks%50 == 0 {
 			log.Printf("Processed %d audio chunks so far", audioChunks)
 		}
-		
+
 		if err := whisperStream.Send(chunk); err != nil {
 			log.Printf("ERROR: Failed to send audio chunk to Whisper: %v", err)
 			return err
 		}
 	}
 	log.Printf("Completed forwarding %d audio chunks to Whisper", audioChunks)
-	
+
 	// Close the send direction of the Whisper stream
 	log.Println("Closing send direction of Whisper stream...")
 	if err := whisperStream.CloseSend(); err != nil {
@@ -189,7 +189,7 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 
 func main() {
 	log.Println("=== gRPC Audio Orchestrator Starting ===")
-	
+
 	// Dial Whisper
 	log.Printf("Connecting to Whisper service at %s...", whisperSockPath)
 	wConn, err := grpc.Dial(whisperSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -209,15 +209,16 @@ func main() {
 	defer lConn.Close()
 	llamaClient := pb.NewLlamaServiceClient(lConn)
 	log.Println("Successfully connected to LLaMA service")
-	
+
 	// Test LLaMA connection
 	log.Println("Testing LLaMA service with a simple request...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	testReq := &pb.GenerateRequest{
 		Prompt:      "Hello",
-		MaxTokens:   1,
-		Temperature: 0.0,
+		MaxTokens:   128, // Reduced max tokens for each segment
+		Temperature: 0.7,
+		TopP:        0.9,
 	}
 	testStream, testErr := llamaClient.Generate(ctx, testReq)
 	if testErr != nil {
