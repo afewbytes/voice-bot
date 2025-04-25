@@ -8,6 +8,7 @@ services:
     volumes:
       - whisper-socket:/app/sockets
       - llama-socket:/app/llama-sockets
+      - piper-socket:/app/piper-sockets
     ports:
       - "8090:8090"       # external gRPC API
     depends_on:
@@ -15,6 +16,8 @@ services:
         condition: service_healthy
       llama:
         condition: service_started
+      piper:
+        condition: service_healthy
     restart: on-failure
     entrypoint: >
       /bin/sh -c "
@@ -22,6 +25,8 @@ services:
       while [ ! -S /app/sockets/whisper.sock ]; do sleep 0.2; done &&
       echo 'Waiting for llama socket…' &&
       while [ ! -S /app/llama-sockets/llama.sock ]; do sleep 0.2; done &&
+      echo 'Waiting for piper socket…' &&
+      while [ ! -S /app/piper-sockets/piper.sock ]; do sleep 0.2; done &&
       echo 'All backends ready; starting API…' &&
       exec /app/server"
 
@@ -60,10 +65,27 @@ services:
       start_period: 10s
     restart: on-failure
 
+  piper:
+    build:
+      context: .
+      dockerfile: piper_server/Dockerfile
+    volumes:
+      - piper-socket:/app/piper-sockets
+      - ./piper_models:/app/models
+    healthcheck:
+      test: ["CMD", "test", "-S", "/app/piper-sockets/piper.sock"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: on-failure
+
 volumes:
   whisper-socket:
     driver: local
   llama-socket:
+    driver: local
+  piper-socket:
     driver: local
   whisper-models:
     driver: local

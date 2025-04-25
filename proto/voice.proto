@@ -5,6 +5,8 @@ package voice;
 // Keep the go_package option
 option go_package = "./proto;pb";
 
+// WHISPER
+
 // Audio → Transcript + Generation
 service WhisperService {
   // Client streams AudioChunk → server, server streams back StreamAudioResponse
@@ -34,6 +36,8 @@ message Transcription {
   string text = 1;
 }
 
+// LLAMA
+
 service LlamaService {
   rpc Generate (GenerateRequest) returns (stream GenerateResponse);
 }
@@ -48,4 +52,32 @@ message GenerateRequest {
 message GenerateResponse {
   string text = 1;
   bool   done = 2;
+}
+
+// TTS
+
+service TextToSpeech {
+  // Streaming text to audio conversion
+  rpc SynthesizeStreamingText(stream TextRequest) returns (stream AudioResponse) {}
+  
+  // Simple non-streaming version for basic functionality
+  rpc SynthesizeText(TextRequest) returns (AudioResponse) {}
+}
+
+// Text input for synthesis
+message TextRequest {
+  string text = 1;
+  
+  // Optional parameters
+  float speaking_rate = 2;  // 1.0 is normal speed
+  float pitch = 3;          // 1.0 is normal pitch
+  string voice_name = 4;    // Default voice if empty
+}
+
+// Audio response from synthesis
+message AudioResponse {
+  bytes audio_chunk = 1;    // Raw audio data chunk
+  int32 sample_rate = 2;    // Sample rate of the audio
+  string audio_format = 3;  // Format like "wav", "raw"
+  bool is_end = 4;          // Indicates end of stream
 }
