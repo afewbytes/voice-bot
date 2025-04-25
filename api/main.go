@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"io"
 	"log"
 	"net"
@@ -9,7 +8,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	pb "voice-bot/proto"
 
@@ -209,38 +207,6 @@ func main() {
 	defer lConn.Close()
 	llamaClient := pb.NewLlamaServiceClient(lConn)
 	log.Println("Successfully connected to LLaMA service")
-
-	// Test LLaMA connection
-	log.Println("Testing LLaMA service with a simple request...")
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	testReq := &pb.GenerateRequest{
-		Prompt:      "Hello",
-		MaxTokens:   128, // Reduced max tokens for each segment
-		Temperature: 0.7,
-		TopP:        0.9,
-	}
-	testStream, testErr := llamaClient.Generate(ctx, testReq)
-	if testErr != nil {
-		log.Printf("WARNING: LLaMA test request failed: %v", testErr)
-	} else {
-		log.Println("LLaMA test request succeeded, checking for response...")
-		resp, err := testStream.Recv()
-		if err != nil && err != io.EOF {
-			log.Printf("WARNING: Error receiving LLaMA test response: %v", err)
-		} else if err == io.EOF {
-			log.Println("WARNING: LLaMA test gave EOF without data")
-		} else {
-			log.Printf("LLaMA test response: %q", resp.GetText())
-		}
-		// Drain the rest
-		for {
-			_, err := testStream.Recv()
-			if err != nil {
-				break
-			}
-		}
-	}
 
 	log.Println("=== gRPC Audio Orchestrator ===")
 	log.Println("Whisper at", whisperSockPath, "  LLaMA at", llamaSockPath)

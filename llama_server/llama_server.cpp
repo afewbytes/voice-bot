@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cmath>
 
 #include <grpcpp/grpcpp.h>
 #include "voice.grpc.pb.h"
@@ -17,116 +18,122 @@ using voice::LlamaService;
 using voice::GenerateRequest;
 using voice::GenerateResponse;
 
-// Function to run a simple startup test
 bool run_startup_test(llama_model* model, llama_context* context, const llama_vocab* vocab) {
-  std::cout << "Running startup test..." << std::endl;
+    std::cout << "Running startup test..." << std::endl;
+  
+    const std::string test_prompt = "Hello, my name is";
+    std::cout << "Startup test prompt: \"" << test_prompt << "\"" << std::endl;
+  
+    int n_tokens = -llama_tokenize(vocab, test_prompt.c_str(), (int)test_prompt.size(), nullptr, 0, true, true);
+    if (n_tokens <= 0) {
+      std::cerr << "Startup test failed: Tokenization error" << std::endl;
+      return false;
+    }
+  
+    std::vector<llama_token> tokens(n_tokens);
+    if (llama_tokenize(vocab, test_prompt.c_str(), (int)test_prompt.size(), tokens.data(), n_tokens, true, true) < 0) {
+      std::cerr << "Startup test failed: Tokenization error" << std::endl;
+      return false;
+    }
+  
+    llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
+    if (llama_decode(context, batch) != 0) {
+      std::cerr << "Startup test failed: Prompt evaluation error" << std::endl;
+      return false;
+    }
+  
+    // Check logits before sampling
+    const float* logits = llama_get_logits(context);
+    int vocab_size = llama_vocab_n_tokens(vocab);
+    bool all_invalid = true;
+    for (int i = 0; i < vocab_size; ++i) {
+      if (!std::isnan(logits[i]) && logits[i] > -INFINITY) {
+        all_invalid = false;
+        break;
+      }
+    }
+  
+    if (all_invalid) {
+      std::cerr << "Startup test failed: All logits are NaN or invalid" << std::endl;
+      return false;
+    }
+  
+    llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
+    sparams.no_perf = false;
+    llama_sampler *sampler = llama_sampler_chain_init(sparams);
+  
+    uint32_t seed = LLAMA_DEFAULT_SEED;
 
-  const std::string test_prompt = "Hello, my name is";
-  std::cout << "Startup test prompt: \"" << test_prompt << "\"" << std::endl;
-
-  int n_tokens = -llama_tokenize(
-      vocab, test_prompt.c_str(), (int)test_prompt.size(),
-      nullptr, 0,
-      true, true
-  );
-
-  if (n_tokens <= 0) {
-    std::cerr << "Startup test failed: Tokenization error" << std::endl;
-    return false;
-  }
-
-  std::vector<llama_token> tokens(n_tokens);
-  if (llama_tokenize(
-          vocab, test_prompt.c_str(), (int)test_prompt.size(),
-          tokens.data(), n_tokens,
-          true, true
-      ) < 0) {
-    std::cerr << "Startup test failed: Tokenization error" << std::endl;
-    return false;
-  }
-
-  llama_batch batch = llama_batch_get_one(tokens.data(), tokens.size());
-  if (llama_decode(context, batch) != 0) {
-    std::cerr << "Startup test failed: Prompt evaluation error" << std::endl;
-    return false;
-  }
-
-  llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
-  sparams.no_perf = false;
-  llama_sampler *sampler = llama_sampler_chain_init(sparams);
-  llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
-
-  llama_token token_id = llama_sampler_sample(sampler, context, -1);
-
-  if (token_id < 0 || llama_vocab_is_eog(vocab, token_id)) {
-    std::cerr << "Startup test failed: Could not generate a valid token" << std::endl;
-    llama_sampler_free(sampler);
-    return false;
-  }
-
-  char buf[16];
-  int pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), 0, true);
-  if (pcsz <= 0) {
-    std::cerr << "Startup test failed: Could not convert token to piece" << std::endl;
-    llama_sampler_free(sampler);
-    return false;
-  }
-
-  std::string first_piece(buf, pcsz);
-  std::cout << "First token generated: \"" << first_piece << "\"" << std::endl;
-
-  std::string full_output = first_piece;
-
-  if (llama_decode(context, batch) != 0) {
-    std::cerr << "Startup test failed: Could not reset context" << std::endl;
-    llama_sampler_free(sampler);
-    return false;
-  }
-
-  batch = llama_batch_get_one(&token_id, 1);
-  if (llama_decode(context, batch) != 0) {
-    std::cerr << "Startup test failed: Decoding error" << std::endl;
-    llama_sampler_free(sampler);
-    return false;
-  }
-
-  const int more_tokens = 2;
-  std::cout << "Generating " << more_tokens << " more tokens: ";
-  bool generation_complete = false;
-
-  for (int i = 0; i < more_tokens && !generation_complete; ++i) {
-    token_id = llama_sampler_sample(sampler, context, -1);
-
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));       // keep 40 best
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.95f, 1)); // keep top-95 %
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7f));      // soften probs
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(seed));      // *selects* one
+  
+    llama_token token_id = llama_sampler_sample(sampler, context, -1);
+  
     if (token_id < 0 || llama_vocab_is_eog(vocab, token_id)) {
-      std::cout << "[end]";
-      generation_complete = true;
-      continue;
+      std::cerr << "Startup test failed: Could not generate a valid token (token_id = " << token_id << ")" << std::endl;
+      llama_sampler_free(sampler);
+      return false;
     }
-
-    pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), 0, true);
+  
+    char buf[16];
+    int pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), 0, true);
     if (pcsz <= 0) {
-      std::cout << "[invalid]";
-      continue;
+      std::cerr << "Startup test failed: Could not convert token to piece" << std::endl;
+      llama_sampler_free(sampler);
+      return false;
     }
-
-    std::string piece(buf, pcsz);
-    std::cout << piece;
-    full_output += piece;
-
+  
+    std::string first_piece(buf, pcsz);
+    std::cout << "First token generated: \"" << first_piece << "\"" << std::endl;
+  
+    std::string full_output = first_piece;
+  
+    // Do NOT call llama_decode(context, batch) again – instead feed new token
     batch = llama_batch_get_one(&token_id, 1);
     if (llama_decode(context, batch) != 0) {
-      std::cout << "[error]";
-      break;
+      std::cerr << "Startup test failed: Decoding error after first token" << std::endl;
+      llama_sampler_free(sampler);
+      return false;
     }
+  
+    const int more_tokens = 2;
+    std::cout << "Generating " << more_tokens << " more tokens: ";
+    bool generation_complete = false;
+  
+    for (int i = 0; i < more_tokens && !generation_complete; ++i) {
+      token_id = llama_sampler_sample(sampler, context, -1);
+  
+      if (token_id < 0 || llama_vocab_is_eog(vocab, token_id)) {
+        std::cout << "[end]";
+        generation_complete = true;
+        continue;
+      }
+  
+      pcsz = llama_token_to_piece(vocab, token_id, buf, sizeof(buf), 0, true);
+      if (pcsz <= 0) {
+        std::cout << "[invalid]";
+        continue;
+      }
+  
+      std::string piece(buf, pcsz);
+      std::cout << piece;
+      full_output += piece;
+  
+      batch = llama_batch_get_one(&token_id, 1);
+      if (llama_decode(context, batch) != 0) {
+        std::cout << "[error]";
+        break;
+      }
+    }
+  
+    std::cout << std::endl;
+    std::cout << "Startup test completed successfully" << std::endl;
+  
+    llama_sampler_free(sampler);
+    return true;
   }
-
-  std::cout << std::endl;
-  std::cout << "Startup test completed successfully" << std::endl;
-
-  llama_sampler_free(sampler);
-
-  return true;
-}
 
 class LlamaServiceImpl final : public LlamaService::Service {
 public:
@@ -211,14 +218,12 @@ public:
     sparams.no_perf = false;
     llama_sampler *sampler = llama_sampler_chain_init(sparams);
 
-    // Add top-k first to ensure we have enough candidates
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));  // Use a reasonable k value like 40
+    uint32_t seed = LLAMA_DEFAULT_SEED;
 
-    // Then add top-p with min_keep=1 to ensure at least one token is always kept
-    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(top_p, 1));
-
-    // Finally add temperature sampling
-    llama_sampler_chain_add(sampler, llama_sampler_init_temp(temp));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));       // keep 40 best
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.95f, 1)); // keep top-95 %
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7f));      // soften probs
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(seed));      // *selects* one
 
     GenerateResponse resp;
     for (int i = 0; i < max_tokens; ++i) {
