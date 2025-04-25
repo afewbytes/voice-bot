@@ -7,7 +7,7 @@
   # Install system dependencies
   # -----------------------------------------------------------------------------
   RUN apt-get update && apt-get install -y \
-      build-essential cmake git \
+      build-essential cmake git wget \
       libgrpc++-dev \
       libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
       pkg-config libgomp1 \
@@ -15,6 +15,16 @@
       libopus-dev libopusfile-dev libsamplerate0-dev \
       libspdlog-dev \
       && rm -rf /var/lib/apt/lists/*
+  
+  # -----------------------------------------------------------------------------
+  # Download and install piper_phonemize with its data files
+  # -----------------------------------------------------------------------------
+  RUN mkdir -p /tmp/piper_phonemize && \
+      cd /tmp/piper_phonemize && \
+      wget https://github.com/rhasspy/piper-phonemize/releases/download/v1.1.0/libpiper_phonemize-amd64.tar.gz && \
+      tar -xf libpiper_phonemize-amd64.tar.gz && \
+      cp -r /tmp/piper_phonemize/lib/espeak-ng-data /usr/share/ && \
+      rm -rf /tmp/piper_phonemize
   
   # -----------------------------------------------------------------------------
   # Working directory
@@ -48,9 +58,7 @@
   
   # Check what was built
   RUN echo "Listing Piper build files:" && \
-      find /app/piper/build -name "*.so" | grep -v "/temp/" && \
-      echo "Listing Piper install files:" && \
-      find /app/piper/build/install -type f | sort
+      find /app/piper/build -name "*.so" | grep -v "/temp/" || true
   
   # -----------------------------------------------------------------------------
   # Build piper_server (directly including Piper's source files)
@@ -70,12 +78,19 @@
   # Build piper_server
   RUN mkdir -p build && cd build && \
       cmake .. && \
-      make -j$(nproc) VERBOSE=1
+      make -j$(nproc)
+  
+  # -----------------------------------------------------------------------------
+  # Verify espeak-ng data files are installed correctly
+  # -----------------------------------------------------------------------------
+  RUN ls -la /usr/share/espeak-ng-data/ && \
+      ls -la /usr/share/espeak-ng-data/phontab || echo "phontab file is missing"
   
   # -----------------------------------------------------------------------------
   # Runtime setup
   # -----------------------------------------------------------------------------
   RUN mkdir -p /app/piper-sockets && chmod 777 /app/piper-sockets
+  RUN mkdir -p /app/models
   
   # -----------------------------------------------------------------------------
   # Command to start piper_server
