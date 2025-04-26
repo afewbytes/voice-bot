@@ -17,15 +17,16 @@ import (
 )
 
 const (
-    // Server configuration
     listenAddr      = ":8090"
     whisperSockPath = "unix:///app/sockets/whisper.sock"
     llamaSockPath   = "unix:///app/llama-sockets/llama.sock"
     piperSockPath   = "unix:///app/piper-sockets/piper.sock"
 )
 
-// WhisperServiceServer orchestrates Whisper (ASR), Llama (LLM) and Piper (TTS).
-// Each gRPC client connection gets its own in‑memory transcript so Llama sees the whole dialog.
+// single line system prompt
+const systemPrompt = "system: You are a concise conversational voice assistant. DO NOT invent user turns or ask follow‑up questions. Just answer briefly."
+
+// server orchestration
 type WhisperServiceServer struct {
     pb.UnimplementedWhisperServiceServer
     whisperClient pb.WhisperServiceClient
@@ -33,154 +34,118 @@ type WhisperServiceServer struct {
     ttsClient     pb.TextToSpeechClient
 }
 
-// StreamAudio – bidirectional: client mic  → Whisper  → Llama → Piper → client speaker.
 func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioServer) error {
     convID := uuid.NewString()
     log.Printf("[conv %s] client connected", convID)
 
     ctx := stream.Context()
-    transcript := make([]string, 0, 64) // freed when stream ends
+    transcript := []string{systemPrompt}
 
-    // ─── 1. open Whisper stream ────────────────────────────────────────────────
     whisperStream, err := s.whisperClient.StreamAudio(ctx)
     if err != nil {
         return err
     }
     defer whisperStream.CloseSend()
 
-    // ─── 2. goroutine: Whisper → Llama → Piper, sending only FINAL Llama reply ──
     errCh := make(chan error, 1)
     go func() {
-        seg := 0
-        for {
-            // a) read ASR segment
+        for seg := 1; ; seg++ {
+            // ── receive ASR ───────────────────────────────────────────────────
             wResp, err := whisperStream.Recv()
-            if err == io.EOF {
-                errCh <- nil; return
-            }
-            if err != nil {
-                errCh <- err; return
-            }
+            if err == io.EOF { errCh <- nil; return }
+            if err != nil     { errCh <- err; return }
+
             text := strings.TrimSpace(wResp.GetText())
-            if text == "" {
-                continue
-            }
-            seg++
+            if text == "" { seg--; continue }
             log.Printf("[conv %s] ASR #%d: %q", convID, seg, text)
 
-            // b) append USER turn to transcript and forward to client (optional)
             transcript = append(transcript, "user: "+text)
             if err := stream.Send(&pb.StreamAudioResponse{Text: text, Source: pb.StreamAudioResponse_WHISPER}); err != nil {
                 errCh <- err; return
             }
 
-            // c) build prompt & call Llama
+            // ── build prompt & call Llama ────────────────────────────────────
             prompt := strings.Join(transcript, "\n") + "\nassistant:"
-            llamaReq := &pb.GenerateRequest{Prompt: prompt, MaxTokens: 256, Temperature: 0.7, TopP: 0.9}
+            llamaReq := &pb.GenerateRequest{Prompt: prompt, MaxTokens: 128, Temperature: 0.7, TopP: 0.9}
             lStream, err := s.llamaClient.Generate(ctx, llamaReq)
-            if err != nil {
-                log.Printf("[conv %s] Llama error: %v", convID, err)
-                continue
-            }
-            var fullReply strings.Builder
-            for {
-                lResp, err := lStream.Recv()
-                if err == io.EOF {
-                    break
-                }
-                if err != nil {
-                    log.Printf("[conv %s] Llama stream error: %v", convID, err); break
-                }
-                fullReply.WriteString(lResp.GetText())
-                if lResp.GetDone() {
-                    break
-                }
-            }
-            reply := strings.TrimSpace(fullReply.String())
-            if reply == "" {
-                continue
-            }
+            if err != nil { log.Printf("[conv %s] Llama error: %v", convID, err); continue }
 
-            // d) append ASSISTANT turn to transcript
+            var full strings.Builder
+            outer: for {
+                lResp, err := lStream.Recv()
+                if err == io.EOF { break }
+                if err != nil   { log.Printf("[conv %s] Llama stream error: %v", convID, err); break }
+
+                piece := lResp.GetText()
+                full.WriteString(piece)
+
+                // stop if model starts a new turn
+                if idx := strings.Index(full.String(), "\nuser:"); idx != -1 {
+                    tmp := full.String()[:idx]
+					full.Reset()
+					full.WriteString(tmp)
+                    break outer
+                }
+                if idx := strings.Index(full.String(), "\nassistant:"); idx != -1 && idx != 0 {
+                    tmp := full.String()[:idx]
+					full.Reset()
+					full.WriteString(tmp)
+                    break outer
+                }
+
+                if lResp.GetDone() { break }
+            }
+            reply := strings.TrimSpace(full.String())
+            if reply == "" { continue }
+
             transcript = append(transcript, "assistant: "+reply)
 
-            // e) **single** message back to client with complete reply
-            if err := stream.Send(&pb.StreamAudioResponse{
-                Text:   reply,
-                Source: pb.StreamAudioResponse_LLAMA,
-                Done:   true, // single packet, marked done
-            }); err != nil {
+            if err := stream.Send(&pb.StreamAudioResponse{Text: reply, Source: pb.StreamAudioResponse_LLAMA, Done: true}); err != nil {
                 errCh <- err; return
             }
 
-            // f) synthesize TTS
+            // ── TTS synthesis ────────────────────────────────────────────────
             ttsReq := &pb.TextRequest{Text: reply, SpeakingRate: 1.0}
             tStream, err := s.ttsClient.SynthesizeText(ctx, ttsReq)
-            if err != nil {
-                log.Printf("[conv %s] TTS error: %v", convID, err)
-                continue
-            }
+            if err != nil { log.Printf("[conv %s] TTS error: %v", convID, err); continue }
             for {
                 aResp, err := tStream.Recv()
-                if err == io.EOF {
-                    break
-                }
-                if err != nil {
-                    log.Printf("[conv %s] TTS stream error: %v", convID, err); break
-                }
-                if err := stream.Send(&pb.StreamAudioResponse{
-                    AudioData:  aResp.GetAudioChunk(),
-                    SampleRate: aResp.GetSampleRate(),
-                    IsEndAudio: aResp.GetIsEnd(),
-                    Source:     pb.StreamAudioResponse_TTS,
-                }); err != nil {
+                if err == io.EOF { break }
+                if err != nil   { log.Printf("[conv %s] TTS stream error: %v", convID, err); break }
+                if err := stream.Send(&pb.StreamAudioResponse{AudioData: aResp.GetAudioChunk(), SampleRate: aResp.GetSampleRate(), IsEndAudio: aResp.GetIsEnd(), Source: pb.StreamAudioResponse_TTS}); err != nil {
                     errCh <- err; return
                 }
-                if aResp.GetIsEnd() {
-                    break
-                }
+                if aResp.GetIsEnd() { break }
             }
         }
     }()
 
-    // ─── 3. client mic → Whisper ───────────────────────────────────────────────
+    // ── client mic → Whisper ─────────────────────────────────────────────────
     for {
         cChunk, err := stream.Recv()
-        if err == io.EOF {
-            break
-        }
-        if err != nil {
-            return err
-        }
-        if err := whisperStream.Send(cChunk); err != nil {
-            return err
-        }
+        if err == io.EOF { break }
+        if err != nil   { return err }
+        if err := whisperStream.Send(cChunk); err != nil { return err }
     }
     whisperStream.CloseSend()
-    if err := <-errCh; err != nil {
-        return err
-    }
+    if err := <-errCh; err != nil { return err }
     return nil
 }
 
-// main unchanged except for imports / log strings ─────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 func main() {
     log.Println("voice‑bot orchestrator starting…")
 
     wConn, err := grpc.Dial(whisperSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
-    if err != nil {
-        log.Fatalf("Whisper dial: %v", err)
-    }
+    if err != nil { log.Fatalf("Whisper dial: %v", err) }
     defer wConn.Close()
+
     lConn, err := grpc.Dial(llamaSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
-    if err != nil {
-        log.Fatalf("Llama dial: %v", err)
-    }
+    if err != nil { log.Fatalf("Llama dial: %v", err) }
     defer lConn.Close()
+
     pConn, err := grpc.Dial(piperSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
-    if err != nil {
-        log.Fatalf("Piper dial: %v", err)
-    }
+    if err != nil { log.Fatalf("Piper dial: %v", err) }
     defer pConn.Close()
 
     grpcServer := grpc.NewServer()
@@ -191,16 +156,12 @@ func main() {
     })
 
     lis, err := net.Listen("tcp", listenAddr)
-    if err != nil {
-        log.Fatalf("listen: %v", err)
-    }
+    if err != nil { log.Fatalf("listen: %v", err) }
     log.Println("listening on", listenAddr)
 
     sigCh := make(chan os.Signal, 1)
     signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
     go func() { <-sigCh; grpcServer.GracefulStop() }()
 
-    if err := grpcServer.Serve(lis); err != nil {
-        log.Fatalf("serve: %v", err)
-    }
+    if err := grpcServer.Serve(lis); err != nil { log.Fatalf("serve: %v", err) }
 }

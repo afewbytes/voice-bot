@@ -59,7 +59,7 @@ ContextGuard::~ContextGuard() { pool_->release(ctx_); }
 LlamaContextPool::LlamaContextPool(llama_model *model, size_t count, int n_ctx) : model_(model) {
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx   = n_ctx;
-    cp.n_batch = 24;
+    cp.n_batch = 512;
 
     std::cout << "Creating " << count << " context(s) – n_ctx=" << n_ctx << std::endl;
     for (size_t i = 0; i < count; ++i) {
@@ -83,6 +83,7 @@ ContextGuardPtr LlamaContextPool::acquire() {
     return std::make_unique<ContextGuard>(ctx, this);
 }
 void LlamaContextPool::release(llama_context *ctx) {
+    llama_kv_cache_clear(ctx);
     { std::lock_guard<std::mutex> lk(mux_); pool_.push(ctx); }
     cond_.notify_one();
 }
