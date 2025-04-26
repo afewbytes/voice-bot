@@ -54,6 +54,8 @@ services:
       dockerfile: llama_server/Dockerfile
       args:
         - LLAMA_MODEL=llama-2-7b.Q4_K_M.gguf
+    environment:
+      - LLAMA_N_CTX=2048
     volumes:
       - llama-socket:/app/llama-sockets
       - ./llama_models:/app/models      # bind-mount your local models
