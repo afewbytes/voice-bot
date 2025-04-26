@@ -666,8 +666,8 @@ func receiveResponses(stream pb.WhisperService_StreamAudioClient, player *AudioP
 			
 			if len(audioData) > 0 {
 				// Display TTS playback progress
-				fmt.Print("\r\033[K")  // Clear the current line
-				fmt.Printf("TTS: Playing audio (sample rate: %d)...", sampleRate)
+				//fmt.Print("\r\033[K")  // Clear the current line
+				//fmt.Printf("TTS: Playing audio (sample rate: %d)...", sampleRate)
 				if isEndAudio {
 					fmt.Println(" [Complete]")
 				} else {
