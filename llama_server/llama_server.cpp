@@ -1,149 +1,147 @@
+// llama_server.cpp – llama.cpp gRPC micro‑service
+// Streamlined for the **latest** llama.cpp (≥ 2025‑03)
+// – one llama_context per conversation
+// – 1024‑token sliding KV‑window using llama_kv_cache_seq_shift()
+// Build example:
+//   g++ -std=c++17 -O3 -pthread llama_server.cpp \
+//       -lgrpc++ -lprotobuf -lllama -lggml -o llama_server
+
 #include <iostream>
-#include <memory>
 #include <string>
 #include <vector>
-#include <cmath>
-#include <queue>
+#include <unordered_map>
 #include <mutex>
-#include <condition_variable>
 #include <thread>
 #include <fstream>
 #include <cstdlib>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <cerrno>
-#include <cstring>
 
 #include <grpcpp/grpcpp.h>
 #include "voice.grpc.pb.h"
-#include "llama.h"  // adjust include path if needed
+#include "llama.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
-using grpc::Status;
 using grpc::ServerWriter;
+using grpc::Status;
 
 using voice::LlamaService;
 using voice::GenerateRequest;
 using voice::GenerateResponse;
 
-// ───────────────────────────────────────── context‑pool helpers ──────────────
-class LlamaContextPool; // fwd
-class ContextGuard {
+// ───────────────────────────────────────── constants ────────────────────────
+namespace {
+constexpr int WINDOW_TOKENS = 1024;   // keep last 1 k‑tokens in cache
+
+// ---------------------------------------------------------------------------
+// SessionStore – manages one llama_context per live conv‑id
+class SessionStore {
 public:
-    ContextGuard(llama_context *ctx, LlamaContextPool *pool) : ctx_(ctx), pool_(pool) {}
-    ~ContextGuard();
-    llama_context *get() { return ctx_; }
-private:
-    llama_context *ctx_;
-    LlamaContextPool *pool_;
-};
-using ContextGuardPtr = std::unique_ptr<ContextGuard>;
+    SessionStore(llama_model *model, int n_ctx) : model_(model), n_ctx_(n_ctx) {}
 
-class LlamaContextPool {
-public:
-    LlamaContextPool(llama_model *model, size_t count, int n_ctx);
-    ~LlamaContextPool();
-    ContextGuardPtr acquire();
-    void            release(llama_context *ctx);
-private:
-    llama_model              *model_;
-    std::queue<llama_context*> pool_;
-    std::mutex                mux_;
-    std::condition_variable   cond_;
-};
-
-ContextGuard::~ContextGuard() { pool_->release(ctx_); }
-
-LlamaContextPool::LlamaContextPool(llama_model *model, size_t count, int n_ctx) : model_(model) {
-    llama_context_params cp = llama_context_default_params();
-    cp.n_ctx   = n_ctx;
-    cp.n_batch = 512;
-
-    std::cout << "Creating " << count << " context(s) – n_ctx=" << n_ctx << std::endl;
-    for (size_t i = 0; i < count; ++i) {
-        auto *ctx = llama_init_from_model(model_, cp);
-        if (!ctx) {
-            std::cerr << "Failed to create context " << i << std::endl;
-            std::exit(1);
-        }
-        pool_.push(ctx);
+    llama_context *get(const std::string &cid) {
+        std::lock_guard<std::mutex> lk(mux_);
+        auto it = sessions_.find(cid);
+        if (it != sessions_.end()) return it->second;
+        // first time → create context
+        llama_context_params cp = llama_context_default_params();
+        cp.n_ctx   = n_ctx_;
+        cp.n_batch = 512;
+        llama_context *ctx = llama_init_from_model(model_, cp);
+        sessions_.emplace(cid, ctx);
+        return ctx;
     }
-}
 
-LlamaContextPool::~LlamaContextPool() {
-    while (!pool_.empty()) { llama_free(pool_.front()); pool_.pop(); }
-}
+    void drop(const std::string &cid) {
+        std::lock_guard<std::mutex> lk(mux_);
+        auto it = sessions_.find(cid);
+        if (it != sessions_.end()) {
+            llama_free(it->second);
+            sessions_.erase(it);
+        }
+    }
 
-ContextGuardPtr LlamaContextPool::acquire() {
-    std::unique_lock<std::mutex> lk(mux_);
-    cond_.wait(lk, [&]{ return !pool_.empty(); });
-    auto *ctx = pool_.front(); pool_.pop();
-    return std::make_unique<ContextGuard>(ctx, this);
-}
-void LlamaContextPool::release(llama_context *ctx) {
-    llama_kv_cache_clear(ctx);
-    { std::lock_guard<std::mutex> lk(mux_); pool_.push(ctx); }
-    cond_.notify_one();
-}
+private:
+    llama_model *model_;
+    int n_ctx_;
+    std::unordered_map<std::string, llama_context*> sessions_;
+    std::mutex mux_;
+};
 
-// ───────────────────────────────────────── startup smoke‑test ────────────────
-static bool run_startup_test(llama_model *model, const llama_vocab *vocab, int n_ctx) {
+bool startup_test(llama_model *model, const llama_vocab *vocab, int n_ctx) {
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = n_ctx;
     llama_context *ctx = llama_init_from_model(model, cp);
     if (!ctx) return false;
-
     const std::string probe = "Hello";
     std::vector<llama_token> toks(-llama_tokenize(vocab, probe.c_str(), probe.size(), nullptr, 0, true, true));
     llama_tokenize(vocab, probe.c_str(), probe.size(), toks.data(), toks.size(), true, true);
-    if (llama_decode(ctx, llama_batch_get_one(toks.data(), toks.size())) != 0) { llama_free(ctx); return false; }
+    bool ok = llama_decode(ctx, llama_batch_get_one(toks.data(), toks.size())) == 0;
     llama_free(ctx);
-    return true;
+    return ok;
 }
+} // namespace
 
-// ───────────────────────────────────────── gRPC service impl ────────────────
+// ───────────────────────────────────────── service ─────────────────────────
 class LlamaServiceImpl : public LlamaService::Service {
 public:
     explicit LlamaServiceImpl(const std::string &model_path) {
-        // read n_ctx from env (default 2048)
         int n_ctx = 2048;
         if (const char *env = std::getenv("LLAMA_N_CTX")) n_ctx = std::atoi(env);
-        if (n_ctx < 512) n_ctx = 512; // safety floor
-        std::cout << "LLAMA_N_CTX=" << n_ctx << std::endl;
+        n_ctx = std::max(n_ctx, 512);
+        std::cout << "LLAMA_N_CTX=" << n_ctx << "\n";
 
         ggml_backend_load_all();
         llama_model_params mp = llama_model_default_params();
         model_ = llama_model_load_from_file(model_path.c_str(), mp);
-        if (!model_) { std::cerr << "Cannot load model " << model_path << std::endl; std::exit(1);}    
+        if (!model_) {
+            std::cerr << "Cannot load model " << model_path << "\n";
+            std::exit(1);
+        }
         vocab_ = llama_model_get_vocab(model_);
-        if (!vocab_) { std::cerr << "Cannot get vocab" << std::endl; std::exit(1);}        
-
-        if (!run_startup_test(model_, vocab_, n_ctx)) { std::cerr << "startup test failed" << std::endl; std::exit(1);}    
-
-        size_t ctx_count = std::max(1u, std::thread::hardware_concurrency() / 2u);
-        context_pool_ = std::make_unique<LlamaContextPool>(model_, ctx_count, n_ctx);
-        std::cout << "Pool ready: " << ctx_count << " × context(s)" << std::endl;
+        if (!startup_test(model_, vocab_, n_ctx)) {
+            std::cerr << "startup test failed" << std::endl;
+            std::exit(1);
+        }
+        sessions_ = std::make_unique<SessionStore>(model_, n_ctx);
+        std::cout << "llama server ready (sliding window active)" << std::endl;
     }
+
     ~LlamaServiceImpl() override {
-        context_pool_.reset(); if (model_) llama_model_free(model_);
+        sessions_.reset();
+        if (model_) llama_model_free(model_);
     }
 
-    Status Generate(ServerContext *, const GenerateRequest *req, ServerWriter<GenerateResponse> *w) override {
-        auto guard = context_pool_->acquire();
-        llama_context *ctx = guard->get();
+    Status Generate(ServerContext *ctx,
+                    const GenerateRequest *req,
+                    ServerWriter<GenerateResponse> *w) override {
+        // conv‑id header
+        std::string cid = "default";
+        auto md = ctx->client_metadata().find("conv-id");
+        if (md != ctx->client_metadata().end())
+            cid.assign(md->second.data(), md->second.length());
 
-        // tokenise prompt
-        const std::string &prompt = req->prompt();
-        int n   = -llama_tokenize(vocab_, prompt.c_str(), prompt.size(), nullptr, 0, true, true);
-        if (n <= 0) return Status(grpc::StatusCode::INTERNAL, "tokenise_fail");
-        std::vector<llama_token> toks(n);
-        llama_tokenize(vocab_, prompt.c_str(), prompt.size(), toks.data(), n, true, true);
-        if (llama_decode(ctx, llama_batch_get_one(toks.data(), n)) != 0)
-            return Status(grpc::StatusCode::INTERNAL, "prompt_eval_fail");
+        llama_context *llctx = sessions_->get(cid);
 
-        // sampler
+        // ── feed incremental user text ──
+        if (!req->prompt().empty()) {
+            int n_tok = -llama_tokenize(vocab_, req->prompt().c_str(), req->prompt().size(), nullptr, 0, true, true);
+            std::vector<llama_token> toks(n_tok);
+            llama_tokenize(vocab_, req->prompt().c_str(), req->prompt().size(), toks.data(), n_tok, true, true);
+            if (llama_decode(llctx, llama_batch_get_one(toks.data(), n_tok)) != 0)
+                return Status(grpc::StatusCode::INTERNAL, "prompt_eval_fail");
+        }
+
+        #ifdef llama_sampling_stop_strings
+        // ── set stop strings (new API, Apr‑25) ──
+        llama_sampling_stop_strings stop;
+        stop.add("assistant:");
+        llama_set_stop_strings(llctx, &stop);
+#endif
+
+        // ── sampling chain ── ──
         llama_sampler_chain_params sp = llama_sampler_chain_default_params();
         llama_sampler *sampler = llama_sampler_chain_init(sp);
         llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40));
@@ -151,47 +149,62 @@ public:
         llama_sampler_chain_add(sampler, llama_sampler_init_temp(req->temperature() > 0 ? req->temperature() : 0.7f));
         llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
-        // stream tokens
         const int max_tok = req->max_tokens() > 0 ? req->max_tokens() : 256;
         GenerateResponse out;
-        char buf[64]; // was 16 – avoid overflow
-
+        char buf[128];
         for (int i = 0; i < max_tok; ++i) {
-            llama_token next = llama_sampler_sample(sampler, ctx, -1);
+            llama_token next = llama_sampler_sample(sampler, llctx, -1);
             if (llama_vocab_is_eog(vocab_, next)) break;
             int sz = llama_token_to_piece(vocab_, next, buf, sizeof(buf), 0, true);
             out.set_text(sz > 0 ? std::string(buf, sz) : "");
             out.set_done(false);
             w->Write(out);
-            if (llama_decode(ctx, llama_batch_get_one(&next, 1)) != 0) {
+            if (llama_decode(llctx, llama_batch_get_one(&next, 1)) != 0) {
                 llama_sampler_free(sampler);
                 return Status(grpc::StatusCode::INTERNAL, "decode_fail");
             }
         }
         out.set_text(""); out.set_done(true); w->Write(out);
         llama_sampler_free(sampler);
+
+        // ── sliding-window pruning ──
+        #if defined(llama_kv_cache_seq_shift)
+        // preferred fast path (needs llama.cpp ≥ 2025‑04‑22)
+        int total = llama_kv_self_n_tokens(llctx);
+        if (total > WINDOW_TOKENS)
+            llama_kv_cache_seq_shift(llctx, total - WINDOW_TOKENS);
+#else
+        // compatibility – clear everything once window exceeded
+        if (llama_kv_self_n_tokens(llctx) > WINDOW_TOKENS)
+            llama_kv_cache_clear(llctx);
+#endif
+
+        if (ctx->IsCancelled()) sessions_->drop(cid);
         return Status::OK;
     }
+
 private:
     llama_model *model_{nullptr};
     const llama_vocab *vocab_{nullptr};
-    std::unique_ptr<LlamaContextPool> context_pool_;
+    std::unique_ptr<SessionStore> sessions_;
 };
 
-// ───────────────────────────────────────── main ──────────────────────────────
+// ───────────────────────────────────────── main ─────────────────────────────
 int main(int argc, char **argv) {
     std::string model_path = argc > 1 ? argv[1] : "/app/models/Meta-Llama-3.1-8B-Instruct.Q8_0.gguf";
-    const std::string sock = "/app/llama-sockets/llama.sock";
-    const std::string addr = "unix://" + sock;
-    mkdir("/app/llama-sockets", 0777);
+    std::string dir   = "/app/llama-sockets";
+    std::string sock  = dir + "/llama.sock";
+    mkdir(dir.c_str(), 0777);
     unlink(sock.c_str());
 
     LlamaServiceImpl svc(model_path);
 
-    grpc::ServerBuilder b; b.AddListeningPort(addr, grpc::InsecureServerCredentials()); b.RegisterService(&svc);
+    grpc::ServerBuilder b;
+    b.AddListeningPort("unix://" + sock, grpc::InsecureServerCredentials());
+    b.RegisterService(&svc);
     std::unique_ptr<Server> server(b.BuildAndStart());
-    std::ofstream("/app/llama-sockets/ready").close();
-    std::cout << "llama‑cpp server ready on " << addr << std::endl;
+    std::ofstream(dir + "/ready").close();
+    std::cout << "llama server ready on unix://" << sock << std::endl;
     server->Wait();
     return 0;
 }

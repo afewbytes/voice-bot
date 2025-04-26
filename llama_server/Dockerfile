@@ -18,9 +18,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # 2) Clone llama.cpp into /app/llama.cpp
-ARG LLAMA_TAG=b5185
-RUN git clone --branch ${LLAMA_TAG} --depth 1 \
-        https://github.com/ggml-org/llama.cpp.git /app/llama.cpp
+RUN git clone https://github.com/ggml-org/llama.cpp.git /app/llama.cpp
 
 # 3) Copy your server code & proto files
 COPY llama_server/   /app/llama_server/
