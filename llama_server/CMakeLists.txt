@@ -41,12 +41,12 @@ target_include_directories(llama_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../proto
     ${LLAMA_CPP_PATH}
+    ${LLAMA_CPP_PATH}/common 
 )
 
 # 4) link libraries
 target_link_libraries(llama_server PRIVATE
     llama
-    ggml
     ${GRPC_LIBRARIES}
     ${Protobuf_LIBRARIES}
     Threads::Threads

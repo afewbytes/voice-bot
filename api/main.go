@@ -80,11 +80,11 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
             // ── build **incremental** prompt ─────────────────────────────
             var prompt string
             if firstTurn {
-                prompt = systemPrompt + "\nuser: " + text + "\nassistant:"
-                firstTurn = false
-            } else {
-                prompt = "user: " + text + "\nassistant:"
-            }
+				prompt = text           // no “user:” / “assistant:”
+				firstTurn = false
+			} else {
+				prompt = text
+			}
 
             llamaReq := &pb.GenerateRequest{Prompt: prompt, MaxTokens: 128, Temperature: 0.7, TopP: 0.9}
             md := metadata.Pairs("conv-id", convID)
