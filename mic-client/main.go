@@ -23,18 +23,18 @@ import (
 const (
 	serverAddr       = "localhost:8090"
 	sampleRate       = 16000          // Input sample rate
-	framesPerBuffer  = 1024
+	framesPerBuffer  = 1048
 	channels         = 1
 	bytesPerSample   = 2
 	chunkDuration    = 1 * time.Second
-	silenceRMS       = 500.0 // Base RMS threshold for VAD
+	silenceRMS       = 1200.0 // Base RMS threshold for VAD
 	maxSilenceFrames = 10    // Number of consecutive silent frames to mark end of speech
 	vadHoldTime      = 500   // Hold time in milliseconds after speech detected
 	energySmoothing  = 0.7   // Smoothing factor for energy levels (0-1)
 	minSpeechDur     = 300   // Minimum speech duration in milliseconds to consider valid
 	preRollFrames    = 3     // Number of frames to include before speech is detected
 	dynamicThreshold = true  // Whether to use dynamic thresholding
-	thresholdFactor  = 2.0   // Factor above background noise to trigger VAD
+	thresholdFactor  = 4.0   // Factor above background noise to trigger VAD
 	adaptRate        = 0.02  // Rate at which background noise level adapts
 	initialAdapt     = 15     // Number of initial frames for noise profile
 )
@@ -264,6 +264,13 @@ func (ap *AudioPlayer) Close() error {
 	return nil
 }
 
+// IsCurrentlyPlaying returns whether audio is currently being played
+func (ap *AudioPlayer) IsCurrentlyPlaying() bool {
+	ap.mutex.Lock()
+	defer ap.mutex.Unlock()
+	return ap.isPlaying
+}
+
 // VAD state management
 type VADState struct {
 	active          bool // Whether speech is currently active
@@ -350,7 +357,7 @@ func main() {
 	fmt.Println("Streaming from microphone")
 
 	// Process audio from the microphone
-	processAudio(stream, micSource, sig)
+	processAudio(stream, micSource, audioPlayer, sig)
 
 	// Close the stream properly
 	stream.CloseSend()
@@ -362,7 +369,7 @@ func main() {
 }
 
 // Process audio from microphone using VAD logic
-func processAudio(stream pb.WhisperService_StreamAudioClient, source *MicSource, sig chan os.Signal) {
+func processAudio(stream pb.WhisperService_StreamAudioClient, source *MicSource, player *AudioPlayer, sig chan os.Signal) {
 	fmt.Println("=== Streaming from Microphone with VAD ===")
 	fmt.Println("Processing audio... (Press Ctrl+C to exit)")
 
@@ -411,10 +418,21 @@ func processAudio(stream pb.WhisperService_StreamAudioClient, source *MicSource,
 			
 			return
 		default:
+			// Skip processing if TTS is playing
+			// If TTS is playing we still need to drain the mic buffer
+			if player.IsCurrentlyPlaying() {
+				_, _ = source.ReadSamples(audioBuf) // throw away the samples
+				continue
+			}
+			
 			// Read samples from the microphone
 			n, err := source.ReadSamples(audioBuf)
 			if err != nil {
-				log.Printf("read error: %v", err)
+				if err == portaudio.InputOverflowed {
+					// We fell behind – drop the buffered frames and keep going.
+					continue
+				}
+				log.Printf("mic read: %v", err)
 				continue
 			}
 
@@ -460,6 +478,14 @@ func processAudio(stream pb.WhisperService_StreamAudioClient, source *MicSource,
 				vad.noiseFloor = vad.noiseFloor*(1-adaptRate) + rms*adaptRate
 				vad.threshold = vad.noiseFloor * thresholdFactor
 			}
+
+			//lastMeterPrint := time.Now()
+
+			//if time.Since(lastMeterPrint) > 250*time.Millisecond {
+				fmt.Printf("\rRMS:%6.0f  Noise:%6.0f  Th:%6.0f  Act:%v     ",
+						rms, vad.noiseFloor, vad.threshold, vad.active)
+				//lastMeterPrint = time.Now()
+			//}
 
 			isSpeech := vad.lastEnergy >= vad.threshold
 
