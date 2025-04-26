@@ -348,7 +348,10 @@ public:
     GenerateResponse resp;
     std::cout << "[INFO] Session " << session_id << ": Starting token generation" << std::endl;
     
-    for (int i = 0; i < max_tokens; ++i) {
+    // Simple flag to check if we should stop after finding a period
+    bool foundSentenceEnd = false;
+    
+    for (int i = 0; i < max_tokens && !foundSentenceEnd; ++i) {
       llama_token token_id = llama_sampler_sample(sampler, context, -1);
       if (llama_vocab_is_eog(vocab_, token_id)) {
         std::cout << "[INFO] Session " << session_id << ": Reached EOG token at position " << i << std::endl;
@@ -358,6 +361,17 @@ public:
       char buf[8];
       int pcsz = llama_token_to_piece(vocab_, token_id, buf, sizeof(buf), 0, true);
       std::string piece = (pcsz > 0 ? std::string(buf, pcsz) : "");
+
+      // Check if this piece contains a sentence-ending character
+      if (piece.find('.') != std::string::npos || 
+          piece.find('!') != std::string::npos || 
+          piece.find('?') != std::string::npos) {
+        // We found a sentence ending, will stop after sending this token
+        foundSentenceEnd = true;
+        std::cout << "[INFO] Session " << session_id 
+                  << ": Found sentence ending at position " << i 
+                  << ", will stop generation" << std::endl;
+      }
 
       resp.set_text(piece);
       resp.set_done(false);
