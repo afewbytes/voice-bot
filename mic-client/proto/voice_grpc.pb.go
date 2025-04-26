@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.29.3
-// source: voice.proto
+// source: proto/voice.proto
 
 package pb
 
@@ -26,7 +26,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Audio → Transcript + Generation
+// Audio → Transcript + Generation + TTS
 type WhisperServiceClient interface {
 	// Client streams AudioChunk → server, server streams back StreamAudioResponse
 	StreamAudio(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AudioChunk, StreamAudioResponse], error)
@@ -57,7 +57,7 @@ type WhisperService_StreamAudioClient = grpc.BidiStreamingClient[AudioChunk, Str
 // All implementations must embed UnimplementedWhisperServiceServer
 // for forward compatibility.
 //
-// Audio → Transcript + Generation
+// Audio → Transcript + Generation + TTS
 type WhisperServiceServer interface {
 	// Client streams AudioChunk → server, server streams back StreamAudioResponse
 	StreamAudio(grpc.BidiStreamingServer[AudioChunk, StreamAudioResponse]) error
@@ -117,7 +117,7 @@ var WhisperService_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "voice.proto",
+	Metadata: "proto/voice.proto",
 }
 
 const (
@@ -222,5 +222,146 @@ var LlamaService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "voice.proto",
+	Metadata: "proto/voice.proto",
+}
+
+const (
+	TextToSpeech_SynthesizeStreamingText_FullMethodName = "/voice.TextToSpeech/SynthesizeStreamingText"
+	TextToSpeech_SynthesizeText_FullMethodName          = "/voice.TextToSpeech/SynthesizeText"
+)
+
+// TextToSpeechClient is the client API for TextToSpeech service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type TextToSpeechClient interface {
+	// Streaming text to audio conversion
+	SynthesizeStreamingText(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TextRequest, AudioResponse], error)
+	// Simple non-streaming version for basic functionality
+	SynthesizeText(ctx context.Context, in *TextRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AudioResponse], error)
+}
+
+type textToSpeechClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewTextToSpeechClient(cc grpc.ClientConnInterface) TextToSpeechClient {
+	return &textToSpeechClient{cc}
+}
+
+func (c *textToSpeechClient) SynthesizeStreamingText(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TextRequest, AudioResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &TextToSpeech_ServiceDesc.Streams[0], TextToSpeech_SynthesizeStreamingText_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[TextRequest, AudioResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TextToSpeech_SynthesizeStreamingTextClient = grpc.BidiStreamingClient[TextRequest, AudioResponse]
+
+func (c *textToSpeechClient) SynthesizeText(ctx context.Context, in *TextRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AudioResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &TextToSpeech_ServiceDesc.Streams[1], TextToSpeech_SynthesizeText_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[TextRequest, AudioResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TextToSpeech_SynthesizeTextClient = grpc.ServerStreamingClient[AudioResponse]
+
+// TextToSpeechServer is the server API for TextToSpeech service.
+// All implementations must embed UnimplementedTextToSpeechServer
+// for forward compatibility.
+type TextToSpeechServer interface {
+	// Streaming text to audio conversion
+	SynthesizeStreamingText(grpc.BidiStreamingServer[TextRequest, AudioResponse]) error
+	// Simple non-streaming version for basic functionality
+	SynthesizeText(*TextRequest, grpc.ServerStreamingServer[AudioResponse]) error
+	mustEmbedUnimplementedTextToSpeechServer()
+}
+
+// UnimplementedTextToSpeechServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedTextToSpeechServer struct{}
+
+func (UnimplementedTextToSpeechServer) SynthesizeStreamingText(grpc.BidiStreamingServer[TextRequest, AudioResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method SynthesizeStreamingText not implemented")
+}
+func (UnimplementedTextToSpeechServer) SynthesizeText(*TextRequest, grpc.ServerStreamingServer[AudioResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method SynthesizeText not implemented")
+}
+func (UnimplementedTextToSpeechServer) mustEmbedUnimplementedTextToSpeechServer() {}
+func (UnimplementedTextToSpeechServer) testEmbeddedByValue()                      {}
+
+// UnsafeTextToSpeechServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TextToSpeechServer will
+// result in compilation errors.
+type UnsafeTextToSpeechServer interface {
+	mustEmbedUnimplementedTextToSpeechServer()
+}
+
+func RegisterTextToSpeechServer(s grpc.ServiceRegistrar, srv TextToSpeechServer) {
+	// If the following call pancis, it indicates UnimplementedTextToSpeechServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&TextToSpeech_ServiceDesc, srv)
+}
+
+func _TextToSpeech_SynthesizeStreamingText_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(TextToSpeechServer).SynthesizeStreamingText(&grpc.GenericServerStream[TextRequest, AudioResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TextToSpeech_SynthesizeStreamingTextServer = grpc.BidiStreamingServer[TextRequest, AudioResponse]
+
+func _TextToSpeech_SynthesizeText_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(TextRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(TextToSpeechServer).SynthesizeText(m, &grpc.GenericServerStream[TextRequest, AudioResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TextToSpeech_SynthesizeTextServer = grpc.ServerStreamingServer[AudioResponse]
+
+// TextToSpeech_ServiceDesc is the grpc.ServiceDesc for TextToSpeech service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var TextToSpeech_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "voice.TextToSpeech",
+	HandlerType: (*TextToSpeechServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "SynthesizeStreamingText",
+			Handler:       _TextToSpeech_SynthesizeStreamingText_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "SynthesizeText",
+			Handler:       _TextToSpeech_SynthesizeText_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "proto/voice.proto",
 }

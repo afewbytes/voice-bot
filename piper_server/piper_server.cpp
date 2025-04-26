@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstring>
 #include <chrono>
+#include <fstream>
 
 #include <grpcpp/grpcpp.h>
 
@@ -22,7 +23,11 @@ using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
 using grpc::ServerReaderWriter;
+using grpc::ServerWriter;
 using grpc::Status;
+
+// Forward declaration
+bool run_piper_startup_test(piper::PiperConfig& piper_config, piper::Voice& voice);
 
 class PiperTTSService final : public voice::TextToSpeech::Service {
 public:
@@ -62,6 +67,14 @@ public:
         auto end = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(end - start).count();
         std::cout << "Voice loaded in " << elapsed << " seconds" << std::endl;
+
+        /* ------------------------------------------------------------------ */
+        /*  Run startup test to verify TTS functionality                      */
+        /* ------------------------------------------------------------------ */
+        if (!run_piper_startup_test(piper_config_, voice_)) {
+            std::cerr << "Startup test failed. Exiting..." << std::endl;
+            throw std::runtime_error("Piper TTS startup test failed");
+        }
     }
 
     ~PiperTTSService() override {
@@ -70,11 +83,11 @@ public:
     }
 
     /* ---------------------------------------------------------------------- */
-    /*  Unary synthesis                                                       */
+    /*  Unary synthesis returning a stream                                    */
     /* ---------------------------------------------------------------------- */
     Status SynthesizeText(ServerContext* /*context*/,
                           const voice::TextRequest* request,
-                          voice::AudioResponse* response) override {
+                          ServerWriter<voice::AudioResponse>* writer) override {
 
         std::cout << "SynthesizeText: " << request->text() << std::endl;
 
@@ -104,12 +117,24 @@ public:
                       << " samples in " << sec << " s (RTF "
                       << sec / (audio_samples.size() / 22050.0) << ")\n";
 
-            /* prepare response */
-            response->set_audio_chunk(
-                reinterpret_cast<const char*>(audio_samples.data()),
-                audio_samples.size() * sizeof(int16_t));
-            response->set_sample_rate(22050);
-            response->set_is_end(true);
+            /* send in ~4 kB pages */
+            constexpr size_t page_size   = 4096;
+            const size_t     total_bytes = audio_samples.size() * sizeof(int16_t);
+            const uint8_t*   data        =
+                reinterpret_cast<const uint8_t*>(audio_samples.data());
+
+            for (size_t offset = 0; offset < total_bytes; offset += page_size) {
+                size_t bytes = std::min(page_size, total_bytes - offset);
+
+                voice::AudioResponse response;
+                response.set_audio_chunk(
+                    reinterpret_cast<const char*>(data + offset), bytes);
+                response.set_sample_rate(22050);
+                response.set_is_end(offset + bytes == total_bytes);
+
+                if (!writer->Write(response))
+                    return Status::CANCELLED;  // client hung up
+            }
 
             return Status::OK;
         }
@@ -181,6 +206,67 @@ private:
 };
 
 /* ========================================================================== */
+/*  Startup Test for Piper TTS                                                */
+/* ========================================================================== */
+bool run_piper_startup_test(piper::PiperConfig& piper_config, piper::Voice& voice) {
+    std::cout << "Running Piper TTS startup test..." << std::endl;
+    
+    const std::string test_text = "This is a test of the Piper text-to-speech system.";
+    std::cout << "Startup test prompt: \"" << test_text << "\"" << std::endl;
+    
+    try {
+        // Keep default synthesis parameters for the test
+        std::vector<int16_t> audio_samples;
+        piper::SynthesisResult synth;
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        // Attempt to synthesize speech
+        piper::textToAudio(piper_config,
+                          voice,
+                          test_text,
+                          audio_samples,
+                          synth,
+                          nullptr);  // no streaming callback
+                          
+        auto end = std::chrono::high_resolution_clock::now();
+        double sec = std::chrono::duration<double>(end - start).count();
+        
+        // Verify we got samples
+        if (audio_samples.empty()) {
+            std::cerr << "Startup test failed: No audio samples generated" << std::endl;
+            return false;
+        }
+        
+        std::cout << "Startup test generated " << audio_samples.size()
+                  << " samples in " << sec << " s (RTF "
+                  << sec / (audio_samples.size() / 22050.0) << ")" << std::endl;
+        
+        // Optional: Save samples to a file for debugging (wav header would be needed for proper playback)
+        // Uncomment if needed for debugging
+        /*
+        std::ofstream test_file("/tmp/piper_test.raw", std::ios::binary);
+        if (test_file) {
+            test_file.write(reinterpret_cast<const char*>(audio_samples.data()), 
+                            audio_samples.size() * sizeof(int16_t));
+            std::cout << "Saved test audio to /tmp/piper_test.raw" << std::endl;
+        }
+        */
+        
+        std::cout << "Piper TTS startup test completed successfully" << std::endl;
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Startup test failed with exception: " << e.what() << std::endl;
+        return false;
+    }
+    catch (...) {
+        std::cerr << "Startup test failed with unknown exception" << std::endl;
+        return false;
+    }
+}
+
+/* ========================================================================== */
 /*  main                                                                      */
 /* ========================================================================== */
 int main(int argc, char** argv) {
@@ -202,6 +288,9 @@ int main(int argc, char** argv) {
     }
 
     try {
+        // Create sockets directory if it doesn't exist
+        mkdir("/app/piper-sockets", 0777);
+        
         PiperTTSService service(model_path, config_path);
 
         ServerBuilder builder;
@@ -217,6 +306,10 @@ int main(int argc, char** argv) {
             std::cerr << "Warning: Failed to change socket permissions: "
                       << strerror(errno) << '\n';
         }
+        
+        // Create a ready file to signal that the server is ready
+        std::ofstream("/app/piper-sockets/ready").close();
+        std::cout << "Created ready file: /app/piper-sockets/ready" << std::endl;
 
         server->Wait();
         return 0;

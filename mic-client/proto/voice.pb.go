@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.6
 // 	protoc        v5.29.3
-// source: voice.proto
+// source: proto/voice.proto
 
 package pb
 
@@ -26,6 +26,7 @@ type StreamAudioResponse_Source int32
 const (
 	StreamAudioResponse_WHISPER StreamAudioResponse_Source = 0 // comes from the transcription service
 	StreamAudioResponse_LLAMA   StreamAudioResponse_Source = 1 // comes from the text-generation service
+	StreamAudioResponse_TTS     StreamAudioResponse_Source = 2 // comes from the text-to-speech service
 )
 
 // Enum value maps for StreamAudioResponse_Source.
@@ -33,10 +34,12 @@ var (
 	StreamAudioResponse_Source_name = map[int32]string{
 		0: "WHISPER",
 		1: "LLAMA",
+		2: "TTS",
 	}
 	StreamAudioResponse_Source_value = map[string]int32{
 		"WHISPER": 0,
 		"LLAMA":   1,
+		"TTS":     2,
 	}
 )
 
@@ -51,11 +54,11 @@ func (x StreamAudioResponse_Source) String() string {
 }
 
 func (StreamAudioResponse_Source) Descriptor() protoreflect.EnumDescriptor {
-	return file_voice_proto_enumTypes[0].Descriptor()
+	return file_proto_voice_proto_enumTypes[0].Descriptor()
 }
 
 func (StreamAudioResponse_Source) Type() protoreflect.EnumType {
-	return &file_voice_proto_enumTypes[0]
+	return &file_proto_voice_proto_enumTypes[0]
 }
 
 func (x StreamAudioResponse_Source) Number() protoreflect.EnumNumber {
@@ -64,7 +67,7 @@ func (x StreamAudioResponse_Source) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use StreamAudioResponse_Source.Descriptor instead.
 func (StreamAudioResponse_Source) EnumDescriptor() ([]byte, []int) {
-	return file_voice_proto_rawDescGZIP(), []int{1, 0}
+	return file_proto_voice_proto_rawDescGZIP(), []int{1, 0}
 }
 
 type AudioChunk struct {
@@ -78,7 +81,7 @@ type AudioChunk struct {
 
 func (x *AudioChunk) Reset() {
 	*x = AudioChunk{}
-	mi := &file_voice_proto_msgTypes[0]
+	mi := &file_proto_voice_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -90,7 +93,7 @@ func (x *AudioChunk) String() string {
 func (*AudioChunk) ProtoMessage() {}
 
 func (x *AudioChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_proto_msgTypes[0]
+	mi := &file_proto_voice_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -103,7 +106,7 @@ func (x *AudioChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AudioChunk.ProtoReflect.Descriptor instead.
 func (*AudioChunk) Descriptor() ([]byte, []int) {
-	return file_voice_proto_rawDescGZIP(), []int{0}
+	return file_proto_voice_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *AudioChunk) GetData() []byte {
@@ -127,19 +130,24 @@ func (x *AudioChunk) GetSpeechEnd() bool {
 	return false
 }
 
-// Combined response for both Whisper and Llama outputs
+// Combined response for Whisper, Llama, and TTS outputs
 type StreamAudioResponse struct {
-	state         protoimpl.MessageState     `protogen:"open.v1"`
-	Text          string                     `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`                                            // partial transcription or generated text
-	Done          bool                       `protobuf:"varint,2,opt,name=done,proto3" json:"done,omitempty"`                                           // true on the final chunk (from Llama)
-	Source        StreamAudioResponse_Source `protobuf:"varint,3,opt,name=source,proto3,enum=voice.StreamAudioResponse_Source" json:"source,omitempty"` // which service produced this message
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Text content (from Whisper or Llama)
+	Text string `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`  // partial transcription or generated text
+	Done bool   `protobuf:"varint,2,opt,name=done,proto3" json:"done,omitempty"` // true on the final chunk (from Llama)
+	// Audio content (from TTS)
+	AudioData     []byte                     `protobuf:"bytes,3,opt,name=audio_data,json=audioData,proto3" json:"audio_data,omitempty"`                 // raw audio data (only when source is TTS)
+	SampleRate    int32                      `protobuf:"varint,4,opt,name=sample_rate,json=sampleRate,proto3" json:"sample_rate,omitempty"`             // sample rate of the audio
+	IsEndAudio    bool                       `protobuf:"varint,5,opt,name=is_end_audio,json=isEndAudio,proto3" json:"is_end_audio,omitempty"`           // true when this is the final audio chunk
+	Source        StreamAudioResponse_Source `protobuf:"varint,6,opt,name=source,proto3,enum=voice.StreamAudioResponse_Source" json:"source,omitempty"` // which service produced this message
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StreamAudioResponse) Reset() {
 	*x = StreamAudioResponse{}
-	mi := &file_voice_proto_msgTypes[1]
+	mi := &file_proto_voice_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -151,7 +159,7 @@ func (x *StreamAudioResponse) String() string {
 func (*StreamAudioResponse) ProtoMessage() {}
 
 func (x *StreamAudioResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_proto_msgTypes[1]
+	mi := &file_proto_voice_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -164,7 +172,7 @@ func (x *StreamAudioResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamAudioResponse.ProtoReflect.Descriptor instead.
 func (*StreamAudioResponse) Descriptor() ([]byte, []int) {
-	return file_voice_proto_rawDescGZIP(), []int{1}
+	return file_proto_voice_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *StreamAudioResponse) GetText() string {
@@ -181,56 +189,32 @@ func (x *StreamAudioResponse) GetDone() bool {
 	return false
 }
 
+func (x *StreamAudioResponse) GetAudioData() []byte {
+	if x != nil {
+		return x.AudioData
+	}
+	return nil
+}
+
+func (x *StreamAudioResponse) GetSampleRate() int32 {
+	if x != nil {
+		return x.SampleRate
+	}
+	return 0
+}
+
+func (x *StreamAudioResponse) GetIsEndAudio() bool {
+	if x != nil {
+		return x.IsEndAudio
+	}
+	return false
+}
+
 func (x *StreamAudioResponse) GetSource() StreamAudioResponse_Source {
 	if x != nil {
 		return x.Source
 	}
 	return StreamAudioResponse_WHISPER
-}
-
-// (Optional) You can keep Transcription if used elsewhere
-type Transcription struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Transcription) Reset() {
-	*x = Transcription{}
-	mi := &file_voice_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Transcription) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Transcription) ProtoMessage() {}
-
-func (x *Transcription) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Transcription.ProtoReflect.Descriptor instead.
-func (*Transcription) Descriptor() ([]byte, []int) {
-	return file_voice_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *Transcription) GetText() string {
-	if x != nil {
-		return x.Text
-	}
-	return ""
 }
 
 type GenerateRequest struct {
@@ -245,7 +229,7 @@ type GenerateRequest struct {
 
 func (x *GenerateRequest) Reset() {
 	*x = GenerateRequest{}
-	mi := &file_voice_proto_msgTypes[3]
+	mi := &file_proto_voice_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -257,7 +241,7 @@ func (x *GenerateRequest) String() string {
 func (*GenerateRequest) ProtoMessage() {}
 
 func (x *GenerateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_proto_msgTypes[3]
+	mi := &file_proto_voice_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -270,7 +254,7 @@ func (x *GenerateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateRequest.ProtoReflect.Descriptor instead.
 func (*GenerateRequest) Descriptor() ([]byte, []int) {
-	return file_voice_proto_rawDescGZIP(), []int{3}
+	return file_proto_voice_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *GenerateRequest) GetPrompt() string {
@@ -311,7 +295,7 @@ type GenerateResponse struct {
 
 func (x *GenerateResponse) Reset() {
 	*x = GenerateResponse{}
-	mi := &file_voice_proto_msgTypes[4]
+	mi := &file_proto_voice_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -323,7 +307,7 @@ func (x *GenerateResponse) String() string {
 func (*GenerateResponse) ProtoMessage() {}
 
 func (x *GenerateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_voice_proto_msgTypes[4]
+	mi := &file_proto_voice_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -336,7 +320,7 @@ func (x *GenerateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateResponse.ProtoReflect.Descriptor instead.
 func (*GenerateResponse) Descriptor() ([]byte, []int) {
-	return file_voice_proto_rawDescGZIP(), []int{4}
+	return file_proto_voice_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *GenerateResponse) GetText() string {
@@ -353,26 +337,170 @@ func (x *GenerateResponse) GetDone() bool {
 	return false
 }
 
-var File_voice_proto protoreflect.FileDescriptor
+// Text input for synthesis
+type TextRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Text  string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// Optional parameters
+	SpeakingRate  float32 `protobuf:"fixed32,2,opt,name=speaking_rate,json=speakingRate,proto3" json:"speaking_rate,omitempty"` // 1.0 is normal speed
+	Pitch         float32 `protobuf:"fixed32,3,opt,name=pitch,proto3" json:"pitch,omitempty"`                                   // 1.0 is normal pitch
+	VoiceName     string  `protobuf:"bytes,4,opt,name=voice_name,json=voiceName,proto3" json:"voice_name,omitempty"`            // Default voice if empty
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
 
-const file_voice_proto_rawDesc = "" +
+func (x *TextRequest) Reset() {
+	*x = TextRequest{}
+	mi := &file_proto_voice_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TextRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TextRequest) ProtoMessage() {}
+
+func (x *TextRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_voice_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TextRequest.ProtoReflect.Descriptor instead.
+func (*TextRequest) Descriptor() ([]byte, []int) {
+	return file_proto_voice_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *TextRequest) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *TextRequest) GetSpeakingRate() float32 {
+	if x != nil {
+		return x.SpeakingRate
+	}
+	return 0
+}
+
+func (x *TextRequest) GetPitch() float32 {
+	if x != nil {
+		return x.Pitch
+	}
+	return 0
+}
+
+func (x *TextRequest) GetVoiceName() string {
+	if x != nil {
+		return x.VoiceName
+	}
+	return ""
+}
+
+// Audio response from synthesis
+type AudioResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AudioChunk    []byte                 `protobuf:"bytes,1,opt,name=audio_chunk,json=audioChunk,proto3" json:"audio_chunk,omitempty"`    // Raw audio data chunk
+	SampleRate    int32                  `protobuf:"varint,2,opt,name=sample_rate,json=sampleRate,proto3" json:"sample_rate,omitempty"`   // Sample rate of the audio
+	AudioFormat   string                 `protobuf:"bytes,3,opt,name=audio_format,json=audioFormat,proto3" json:"audio_format,omitempty"` // Format like "wav", "raw"
+	IsEnd         bool                   `protobuf:"varint,4,opt,name=is_end,json=isEnd,proto3" json:"is_end,omitempty"`                  // Indicates end of stream
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AudioResponse) Reset() {
+	*x = AudioResponse{}
+	mi := &file_proto_voice_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AudioResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AudioResponse) ProtoMessage() {}
+
+func (x *AudioResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_voice_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AudioResponse.ProtoReflect.Descriptor instead.
+func (*AudioResponse) Descriptor() ([]byte, []int) {
+	return file_proto_voice_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *AudioResponse) GetAudioChunk() []byte {
+	if x != nil {
+		return x.AudioChunk
+	}
+	return nil
+}
+
+func (x *AudioResponse) GetSampleRate() int32 {
+	if x != nil {
+		return x.SampleRate
+	}
+	return 0
+}
+
+func (x *AudioResponse) GetAudioFormat() string {
+	if x != nil {
+		return x.AudioFormat
+	}
+	return ""
+}
+
+func (x *AudioResponse) GetIsEnd() bool {
+	if x != nil {
+		return x.IsEnd
+	}
+	return false
+}
+
+var File_proto_voice_proto protoreflect.FileDescriptor
+
+const file_proto_voice_proto_rawDesc = "" +
 	"\n" +
-	"\vvoice.proto\x12\x05voice\"b\n" +
+	"\x11proto/voice.proto\x12\x05voice\"b\n" +
 	"\n" +
 	"AudioChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12!\n" +
 	"\fspeech_start\x18\x02 \x01(\bR\vspeechStart\x12\x1d\n" +
 	"\n" +
-	"speech_end\x18\x03 \x01(\bR\tspeechEnd\"\x9a\x01\n" +
+	"speech_end\x18\x03 \x01(\bR\tspeechEnd\"\x85\x02\n" +
 	"\x13StreamAudioResponse\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x12\n" +
-	"\x04done\x18\x02 \x01(\bR\x04done\x129\n" +
-	"\x06source\x18\x03 \x01(\x0e2!.voice.StreamAudioResponse.SourceR\x06source\" \n" +
+	"\x04done\x18\x02 \x01(\bR\x04done\x12\x1d\n" +
+	"\n" +
+	"audio_data\x18\x03 \x01(\fR\taudioData\x12\x1f\n" +
+	"\vsample_rate\x18\x04 \x01(\x05R\n" +
+	"sampleRate\x12 \n" +
+	"\fis_end_audio\x18\x05 \x01(\bR\n" +
+	"isEndAudio\x129\n" +
+	"\x06source\x18\x06 \x01(\x0e2!.voice.StreamAudioResponse.SourceR\x06source\")\n" +
 	"\x06Source\x12\v\n" +
 	"\aWHISPER\x10\x00\x12\t\n" +
-	"\x05LLAMA\x10\x01\"#\n" +
-	"\rTranscription\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"\x7f\n" +
+	"\x05LLAMA\x10\x01\x12\a\n" +
+	"\x03TTS\x10\x02\"\x7f\n" +
 	"\x0fGenerateRequest\x12\x16\n" +
 	"\x06prompt\x18\x01 \x01(\tR\x06prompt\x12\x1d\n" +
 	"\n" +
@@ -381,69 +509,90 @@ const file_voice_proto_rawDesc = "" +
 	"\x05top_p\x18\x04 \x01(\x02R\x04topP\":\n" +
 	"\x10GenerateResponse\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x12\n" +
-	"\x04done\x18\x02 \x01(\bR\x04done2R\n" +
+	"\x04done\x18\x02 \x01(\bR\x04done\"{\n" +
+	"\vTextRequest\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12#\n" +
+	"\rspeaking_rate\x18\x02 \x01(\x02R\fspeakingRate\x12\x14\n" +
+	"\x05pitch\x18\x03 \x01(\x02R\x05pitch\x12\x1d\n" +
+	"\n" +
+	"voice_name\x18\x04 \x01(\tR\tvoiceName\"\x8b\x01\n" +
+	"\rAudioResponse\x12\x1f\n" +
+	"\vaudio_chunk\x18\x01 \x01(\fR\n" +
+	"audioChunk\x12\x1f\n" +
+	"\vsample_rate\x18\x02 \x01(\x05R\n" +
+	"sampleRate\x12!\n" +
+	"\faudio_format\x18\x03 \x01(\tR\vaudioFormat\x12\x15\n" +
+	"\x06is_end\x18\x04 \x01(\bR\x05isEnd2R\n" +
 	"\x0eWhisperService\x12@\n" +
 	"\vStreamAudio\x12\x11.voice.AudioChunk\x1a\x1a.voice.StreamAudioResponse(\x010\x012M\n" +
 	"\fLlamaService\x12=\n" +
-	"\bGenerate\x12\x16.voice.GenerateRequest\x1a\x17.voice.GenerateResponse0\x01B\fZ\n" +
+	"\bGenerate\x12\x16.voice.GenerateRequest\x1a\x17.voice.GenerateResponse0\x012\x99\x01\n" +
+	"\fTextToSpeech\x12I\n" +
+	"\x17SynthesizeStreamingText\x12\x12.voice.TextRequest\x1a\x14.voice.AudioResponse\"\x00(\x010\x01\x12>\n" +
+	"\x0eSynthesizeText\x12\x12.voice.TextRequest\x1a\x14.voice.AudioResponse\"\x000\x01B\fZ\n" +
 	"./proto;pbb\x06proto3"
 
 var (
-	file_voice_proto_rawDescOnce sync.Once
-	file_voice_proto_rawDescData []byte
+	file_proto_voice_proto_rawDescOnce sync.Once
+	file_proto_voice_proto_rawDescData []byte
 )
 
-func file_voice_proto_rawDescGZIP() []byte {
-	file_voice_proto_rawDescOnce.Do(func() {
-		file_voice_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_voice_proto_rawDesc), len(file_voice_proto_rawDesc)))
+func file_proto_voice_proto_rawDescGZIP() []byte {
+	file_proto_voice_proto_rawDescOnce.Do(func() {
+		file_proto_voice_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_voice_proto_rawDesc), len(file_proto_voice_proto_rawDesc)))
 	})
-	return file_voice_proto_rawDescData
+	return file_proto_voice_proto_rawDescData
 }
 
-var file_voice_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_voice_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
-var file_voice_proto_goTypes = []any{
+var file_proto_voice_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_proto_voice_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_proto_voice_proto_goTypes = []any{
 	(StreamAudioResponse_Source)(0), // 0: voice.StreamAudioResponse.Source
 	(*AudioChunk)(nil),              // 1: voice.AudioChunk
 	(*StreamAudioResponse)(nil),     // 2: voice.StreamAudioResponse
-	(*Transcription)(nil),           // 3: voice.Transcription
-	(*GenerateRequest)(nil),         // 4: voice.GenerateRequest
-	(*GenerateResponse)(nil),        // 5: voice.GenerateResponse
+	(*GenerateRequest)(nil),         // 3: voice.GenerateRequest
+	(*GenerateResponse)(nil),        // 4: voice.GenerateResponse
+	(*TextRequest)(nil),             // 5: voice.TextRequest
+	(*AudioResponse)(nil),           // 6: voice.AudioResponse
 }
-var file_voice_proto_depIdxs = []int32{
+var file_proto_voice_proto_depIdxs = []int32{
 	0, // 0: voice.StreamAudioResponse.source:type_name -> voice.StreamAudioResponse.Source
 	1, // 1: voice.WhisperService.StreamAudio:input_type -> voice.AudioChunk
-	4, // 2: voice.LlamaService.Generate:input_type -> voice.GenerateRequest
-	2, // 3: voice.WhisperService.StreamAudio:output_type -> voice.StreamAudioResponse
-	5, // 4: voice.LlamaService.Generate:output_type -> voice.GenerateResponse
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
+	3, // 2: voice.LlamaService.Generate:input_type -> voice.GenerateRequest
+	5, // 3: voice.TextToSpeech.SynthesizeStreamingText:input_type -> voice.TextRequest
+	5, // 4: voice.TextToSpeech.SynthesizeText:input_type -> voice.TextRequest
+	2, // 5: voice.WhisperService.StreamAudio:output_type -> voice.StreamAudioResponse
+	4, // 6: voice.LlamaService.Generate:output_type -> voice.GenerateResponse
+	6, // 7: voice.TextToSpeech.SynthesizeStreamingText:output_type -> voice.AudioResponse
+	6, // 8: voice.TextToSpeech.SynthesizeText:output_type -> voice.AudioResponse
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_voice_proto_init() }
-func file_voice_proto_init() {
-	if File_voice_proto != nil {
+func init() { file_proto_voice_proto_init() }
+func file_proto_voice_proto_init() {
+	if File_proto_voice_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_voice_proto_rawDesc), len(file_voice_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_voice_proto_rawDesc), len(file_proto_voice_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   3,
 		},
-		GoTypes:           file_voice_proto_goTypes,
-		DependencyIndexes: file_voice_proto_depIdxs,
-		EnumInfos:         file_voice_proto_enumTypes,
-		MessageInfos:      file_voice_proto_msgTypes,
+		GoTypes:           file_proto_voice_proto_goTypes,
+		DependencyIndexes: file_proto_voice_proto_depIdxs,
+		EnumInfos:         file_proto_voice_proto_enumTypes,
+		MessageInfos:      file_proto_voice_proto_msgTypes,
 	}.Build()
-	File_voice_proto = out.File
-	file_voice_proto_goTypes = nil
-	file_voice_proto_depIdxs = nil
+	File_proto_voice_proto = out.File
+	file_proto_voice_proto_goTypes = nil
+	file_proto_voice_proto_depIdxs = nil
 }

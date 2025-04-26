@@ -20,17 +20,19 @@ const (
 	listenAddr      = ":8090"
 	whisperSockPath = "unix:///app/sockets/whisper.sock"
 	llamaSockPath   = "unix:///app/llama-sockets/llama.sock"
+	piperSockPath   = "unix:///app/piper-sockets/piper.sock"
 )
 
 // WhisperServiceServer implements the gRPC server for WhisperService
-// It orchestrates between WhisperService (transcription) and LlamaService (generation)
+// It orchestrates between WhisperService (transcription), LlamaService (generation), and TTS
 type WhisperServiceServer struct {
 	pb.UnimplementedWhisperServiceServer
 	whisperClient pb.WhisperServiceClient
 	llamaClient   pb.LlamaServiceClient
+	ttsClient     pb.TextToSpeechClient
 }
 
-// StreamAudio handles a bi-directional stream: audio chunks in, transcript + generation out
+// StreamAudio handles a bi-directional stream: audio chunks in, transcript + generation + synthesized speech out
 func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioServer) error {
 	log.Println("New gRPC client connected")
 
@@ -100,8 +102,11 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				continue // Continue with next segment even if this one fails
 			}
 
-			// Stream LLaMA tokens to client
+			// Accumulate LLaMA tokens for TTS synthesis
+			var fullLlamaResponse string
 			tokenCount := 0
+			
+			// Stream LLaMA tokens to client
 			for {
 				genResp, err := llamaStream.Recv()
 				if err == io.EOF {
@@ -118,6 +123,7 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				tokenText := genResp.GetText()
 				isDone := genResp.GetDone()
 				tokenCount++
+				fullLlamaResponse += tokenText
 
 				if tokenCount%20 == 0 {
 					log.Printf("Received %d LLaMA tokens for segment #%d",
@@ -127,7 +133,6 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				// Send token to client
 				if err := stream.Send(&pb.StreamAudioResponse{
 					Text:   tokenText,
-					Done:   isDone,
 					Source: pb.StreamAudioResponse_LLAMA,
 				}); err != nil {
 					log.Printf("ERROR: Failed to send LLaMA token to client: %v", err)
@@ -138,6 +143,62 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				if isDone {
 					log.Printf("LLaMA generation for segment #%d complete", transcriptionSegments)
 					break
+				}
+			}
+			
+			// Only synthesize speech if we have some text
+			if fullLlamaResponse != "" {
+				// Now synthesize the LLaMA response using Piper TTS
+				log.Printf("Synthesizing speech for LLaMA response: %q", fullLlamaResponse)
+				ttsReq := &pb.TextRequest{
+					Text:         fullLlamaResponse,
+					SpeakingRate: 1.0, // Default speaking rate
+				}
+				
+				// Call the TTS service
+				ttsStream, err := s.ttsClient.SynthesizeText(ctx, ttsReq)
+				if err != nil {
+					log.Printf("WARNING: Failed to call Piper TTS service: %v", err)
+					continue
+				}
+				
+				// Stream the audio back to the client
+				audioChunkCount := 0
+				for {
+					audioResp, err := ttsStream.Recv()
+					if err == io.EOF {
+						log.Printf("TTS stream for segment #%d ended (EOF) after %d audio chunks",
+							transcriptionSegments, audioChunkCount)
+						break
+					}
+					if err != nil {
+						log.Printf("WARNING: Error receiving from TTS for segment #%d: %v",
+							transcriptionSegments, err)
+						break
+					}
+					
+					audioChunkCount++
+					if audioChunkCount%10 == 0 {
+						log.Printf("Received %d TTS audio chunks for segment #%d",
+							audioChunkCount, transcriptionSegments)
+					}
+					
+					// Send audio chunk to client
+					if err := stream.Send(&pb.StreamAudioResponse{
+						AudioData:   audioResp.GetAudioChunk(),
+						SampleRate:  audioResp.GetSampleRate(),
+						IsEndAudio:  audioResp.GetIsEnd(),
+						Source:      pb.StreamAudioResponse_TTS,
+					}); err != nil {
+						log.Printf("ERROR: Failed to send TTS audio to client: %v", err)
+						errCh <- err
+						return
+					}
+					
+					if audioResp.GetIsEnd() {
+						log.Printf("TTS synthesis for segment #%d complete", transcriptionSegments)
+						break
+					}
 				}
 			}
 		}
@@ -207,14 +268,27 @@ func main() {
 	defer lConn.Close()
 	llamaClient := pb.NewLlamaServiceClient(lConn)
 	log.Println("Successfully connected to LLaMA service")
+	
+	// Dial Piper TTS
+	log.Printf("Connecting to Piper TTS service at %s...", piperSockPath)
+	pConn, err := grpc.Dial(piperSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("Failed to connect to Piper TTS: %v", err)
+	}
+	defer pConn.Close()
+	ttsClient := pb.NewTextToSpeechClient(pConn)
+	log.Println("Successfully connected to Piper TTS service")
 
 	log.Println("=== gRPC Audio Orchestrator ===")
-	log.Println("Whisper at", whisperSockPath, "  LLaMA at", llamaSockPath)
+	log.Println("Whisper at", whisperSockPath)
+	log.Println("LLaMA at", llamaSockPath)
+	log.Println("Piper TTS at", piperSockPath)
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterWhisperServiceServer(grpcServer, &WhisperServiceServer{
 		whisperClient: whisperClient,
 		llamaClient:   llamaClient,
+		ttsClient:     ttsClient,
 	})
 
 	lis, err := net.Listen("tcp", listenAddr)

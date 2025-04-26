@@ -7,7 +7,7 @@ option go_package = "./proto;pb";
 
 // WHISPER
 
-// Audio → Transcript + Generation
+// Audio → Transcript + Generation + TTS
 service WhisperService {
   // Client streams AudioChunk → server, server streams back StreamAudioResponse
   rpc StreamAudio (stream AudioChunk) returns (stream StreamAudioResponse);
@@ -19,21 +19,24 @@ message AudioChunk {
   bool   speech_end   = 3;
 }
 
-// Combined response for both Whisper and Llama outputs
+// Combined response for Whisper, Llama, and TTS outputs
 message StreamAudioResponse {
   enum Source {
     WHISPER = 0;  // comes from the transcription service
     LLAMA   = 1;  // comes from the text-generation service
+    TTS     = 2;  // comes from the text-to-speech service
   }
 
+  // Text content (from Whisper or Llama)
   string text   = 1;        // partial transcription or generated text
   bool   done   = 2;        // true on the final chunk (from Llama)
-  Source source = 3;        // which service produced this message
-}
-
-// (Optional) You can keep Transcription if used elsewhere
-message Transcription {
-  string text = 1;
+  
+  // Audio content (from TTS)
+  bytes  audio_data = 3;    // raw audio data (only when source is TTS)
+  int32  sample_rate = 4;   // sample rate of the audio
+  bool   is_end_audio = 5;  // true when this is the final audio chunk
+  
+  Source source = 6;        // which service produced this message
 }
 
 // LLAMA
@@ -61,7 +64,7 @@ service TextToSpeech {
   rpc SynthesizeStreamingText(stream TextRequest) returns (stream AudioResponse) {}
   
   // Simple non-streaming version for basic functionality
-  rpc SynthesizeText(TextRequest) returns (AudioResponse) {}
+  rpc SynthesizeText(TextRequest) returns (stream AudioResponse) {}
 }
 
 // Text input for synthesis
