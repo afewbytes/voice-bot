@@ -402,7 +402,7 @@ private:
 
 int main(int argc, char** argv) {
   const std::string server_address("unix:///app/llama-sockets/llama.sock");
-  std::string model_path = "/app/models/llama-2-7b.Q2_K.gguf";
+  std::string model_path = "/app/models/Meta-Llama-3.1-8B-Instruct.Q8_0.gguf";
   if (argc > 1) {
     model_path = argv[1];
   }
