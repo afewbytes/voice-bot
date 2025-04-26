@@ -275,7 +275,7 @@ public:
     
     // Create the context pool
     // Each context shares the same model, which is loaded only once
-    size_t num_contexts = std::max(1, static_cast<int>(2));
+    size_t num_contexts = std::max(1, static_cast<int>(1));
     std::cout << "Creating context pool with " << num_contexts << " contexts (sharing single model)" << std::endl;
     context_pool_ = std::make_unique<LlamaContextPool>(model_, num_contexts);
   }
@@ -402,7 +402,7 @@ private:
 
 int main(int argc, char** argv) {
   const std::string server_address("unix:///app/llama-sockets/llama.sock");
-  std::string model_path = "/app/models/llama-2-7b.Q4_K_M.gguf";
+  std::string model_path = "/app/models/llama-2-7b.Q2_K.gguf";
   if (argc > 1) {
     model_path = argv[1];
   }
