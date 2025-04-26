@@ -34,9 +34,9 @@ const (
 	minSpeechDur     = 300   // Minimum speech duration in milliseconds to consider valid
 	preRollFrames    = 3     // Number of frames to include before speech is detected
 	dynamicThreshold = true  // Whether to use dynamic thresholding
-	thresholdFactor  = 1.5   // Factor above background noise to trigger VAD
+	thresholdFactor  = 2.0   // Factor above background noise to trigger VAD
 	adaptRate        = 0.02  // Rate at which background noise level adapts
-	initialAdapt     = 5     // Number of initial frames for noise profile
+	initialAdapt     = 15     // Number of initial frames for noise profile
 )
 
 // MicSource implements audio source for microphone input
@@ -470,7 +470,7 @@ func processAudio(stream pb.WhisperService_StreamAudioClient, source *MicSource,
 				vad.silentFrames = 0
 				vad.lastSpeechTime = time.Now()
 
-				if !vad.active && vad.speechFrames >= 2 { // Require at least 2 frames of speech to trigger
+				if !vad.active && vad.speechFrames >= 4 { // Require at least 2 frames of speech to trigger
 					// Speech start
 					vad.active = true
 					fmt.Println("\n[Speech detected]")
