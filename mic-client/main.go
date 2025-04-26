@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"strings"
 
 	pb "mic-client/proto"
 
@@ -604,7 +605,7 @@ func processAudio(stream pb.WhisperService_StreamAudioClient, source *MicSource,
 func receiveResponses(stream pb.WhisperService_StreamAudioClient, player *AudioPlayer) {
 	// Current state of displayed transcripts
 	var currentWhisperText string
-	var currentLlamaText string
+	var llamaBuf strings.Builder 
 
 	for {
 		resp, err := stream.Recv()
@@ -634,27 +635,19 @@ func receiveResponses(stream pb.WhisperService_StreamAudioClient, player *AudioP
 			}
 			
 		case pb.StreamAudioResponse_LLAMA:
-			// Update or append to current Llama text
-			text := resp.GetText()
-			if text != "" {
-				// Clear the current line and prepare to display
-				fmt.Print("\r\033[K")  // \r moves cursor to start of line, \033[K clears to end of line
-				
-				if resp.GetDone() {
-					// Final Llama response
-					currentLlamaText += text
-					fmt.Print("\nLLAMA (final): " + currentLlamaText)
-					// Reset after final response
-					currentLlamaText = ""
-				} else {
-					// Accumulate partial Llama response
-					currentLlamaText += text
-					fmt.Print("\nLLAMA: " + currentLlamaText)
-				}
-				
-				// Add newline if needed
-				if len(text) > 0 && text[len(text)-1] != '\n' {
-					fmt.Println()
+			txt := resp.GetText()
+	
+			// 1.  Always append whatever text we got (might be empty)
+			if txt != "" {
+				llamaBuf.WriteString(txt)
+			}
+	
+			// 2.  If this is the final packet for this answer, print & reset
+			if resp.GetDone() {
+				if llamaBuf.Len() > 0 {                 // ignore spurious empty answers
+					fmt.Print("\r\033[K")               // clear VU-meter line
+					fmt.Printf("[LLAMA]: %s\n", llamaBuf.String())
+					llamaBuf.Reset()                    // ready for the next answer
 				}
 			}
 		
@@ -665,15 +658,6 @@ func receiveResponses(stream pb.WhisperService_StreamAudioClient, player *AudioP
 			isEndAudio := resp.GetIsEndAudio()
 			
 			if len(audioData) > 0 {
-				// Display TTS playback progress
-				//fmt.Print("\r\033[K")  // Clear the current line
-				//fmt.Printf("TTS: Playing audio (sample rate: %d)...", sampleRate)
-				if isEndAudio {
-					fmt.Println(" [Complete]")
-				} else {
-					fmt.Println()
-				}
-				
 				// Enqueue audio for playback
 				player.EnqueueAudio(audioData, sampleRate)
 			} else if isEndAudio {

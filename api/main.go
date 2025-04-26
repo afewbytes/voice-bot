@@ -134,6 +134,7 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
 				if err := stream.Send(&pb.StreamAudioResponse{
 					Text:   tokenText,
 					Source: pb.StreamAudioResponse_LLAMA,
+					Done: isDone,
 				}); err != nil {
 					log.Printf("ERROR: Failed to send LLaMA token to client: %v", err)
 					errCh <- err
