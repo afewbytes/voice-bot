@@ -120,7 +120,7 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
             }
 
             // ── TTS synthesis ────────────────────────────────────────────
-            ttsReq := &pb.TextRequest{Text: reply, SpeakingRate: 1.0}
+            ttsReq := &pb.TextRequest{Text: reply, SpeakingRate: 0.75}
             tStream, err := s.ttsClient.SynthesizeText(ctx, ttsReq)
             if err != nil {
                 log.Printf("[conv %s] TTS error: %v", convID, err)

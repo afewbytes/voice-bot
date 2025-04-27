@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   api:
     build:
@@ -10,7 +8,7 @@ services:
       - llama-socket:/app/llama-sockets
       - piper-socket:/app/piper-sockets
     ports:
-      - "8090:8090"       # external gRPC API
+      - "8090:8090"
     depends_on:
       whisper:
         condition: service_healthy
@@ -36,9 +34,9 @@ services:
       dockerfile: whisper/Dockerfile
     volumes:
       - whisper-socket:/app/sockets
-      - whisper-models:/app/models
+     # - whisper-models:/app/models
     environment:
-      - WHISPER_MODEL=ggml-base.en.bin
+      - WHISPER_MODEL=ggml-base.bin
       - WHISPER_USE_GPU=0
     healthcheck:
       test: ["CMD", "test", "-S", "/app/sockets/whisper.sock"]

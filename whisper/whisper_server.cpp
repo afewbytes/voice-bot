@@ -16,7 +16,7 @@
 #include <iomanip>  // std::setprecision
 
 static const std::string SOCKET_PATH = "/app/sockets/whisper.sock";
-static const char* MODEL_PATH        = "/app/models/ggml-base.en.bin";
+static const char* MODEL_PATH        = "/app/models/kb-ggml-model.bin";
 
 // Buffer parameters
 static const size_t MAX_AUDIO_BUFFER = 30 * 16000 * sizeof(int16_t); // 30 seconds max buffer
@@ -36,11 +36,30 @@ ContextGuard::~ContextGuard() { pool_->release(ctx_); }
 //-------------------------------------------------------------------
 // WhisperContextPool (unchanged)
 WhisperContextPool::WhisperContextPool(size_t count) {
+
+    // ----- new pre-flight check -----------------------------------
+    struct stat st;
+    if (stat(MODEL_PATH, &st) != 0) {                       // file not found
+        LOG_ERROR("Model file '" << MODEL_PATH
+                  << "' cannot be accessed (" << std::strerror(errno) << ")");
+        std::exit(EXIT_FAILURE);
+    }
+    if (st.st_size == 0) {                                  // present but empty
+        LOG_ERROR("Model file '" << MODEL_PATH
+                  << "' is zero bytes -- did a bind-mount hide it?");
+        std::exit(EXIT_FAILURE);
+    }
+    // --------------------------------------------------------------
+
     auto params = whisper_context_default_params();
     params.use_gpu = false;
+
     for (size_t i = 0; i < count; ++i) {
         auto* ctx = whisper_init_from_file_with_params(MODEL_PATH, params);
-        if (!ctx) exit(1);
+        if (!ctx) {
+            LOG_ERROR("whisper_init_from_file_with_params() failed");
+            std::exit(EXIT_FAILURE);
+        }
         pool_.push(ctx);
     }
 }
@@ -79,6 +98,7 @@ grpc::Status WhisperServiceImpl::StreamAudio(
     wparams.print_realtime=false; wparams.print_progress=false;
     wparams.print_timestamps=true; wparams.language="en";
     wparams.n_threads = int(std::thread::hardware_concurrency());
+    wparams.language = "sv";
 
     std::vector<whisper_token> prompt_tokens;
     const int N_CTX = whisper_n_text_ctx(ctx);
@@ -165,7 +185,8 @@ void cleanup_socket(){ if(access(SOCKET_PATH.c_str(),F_OK)==0) unlink(SOCKET_PAT
 void RunServer(){
     mkdir("/app/sockets",0777); cleanup_socket();
     std::string addr="unix:" + SOCKET_PATH;
-    WhisperContextPool pool(std::max(1,int(std::thread::hardware_concurrency())));
+    //WhisperContextPool pool(std::max(1,int(std::thread::hardware_concurrency())));
+    WhisperContextPool pool(1);
     WhisperServiceImpl svc(pool);
     grpc::ServerBuilder b; b.AddListeningPort(addr,grpc::InsecureServerCredentials());
     b.RegisterService(&svc);
