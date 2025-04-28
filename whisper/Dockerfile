@@ -38,7 +38,7 @@ RUN protoc -I/app/proto \
 RUN mkdir -p /app/build && cd /app/build && \
     cmake /app \
         -DCMAKE_BUILD_TYPE=Release \
-        -DGGML_CUDA=ON \           # <<< enable CUDA backend
+        -DGGML_CUDA=ON \
         -DCMAKE_CUDA_ARCHITECTURES=native \
         -DWHISPER_USE_OPENMP=OFF && \
     make -j$(nproc)
