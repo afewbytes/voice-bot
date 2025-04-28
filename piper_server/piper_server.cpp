@@ -55,7 +55,7 @@ public:
                              config_path,
                              voice_,          // out-param
                              speakerId,
-                             /* useCuda = */ false);
+                             /* useCuda = */ true);
 
             std::cout << "Piper voice initialized successfully" << std::endl;
         }
