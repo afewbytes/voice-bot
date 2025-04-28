@@ -34,12 +34,16 @@ RUN protoc -I/app/proto \
       --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) \
       /app/proto/voice.proto
 
-# -------- build --------------------------------------------------------------
+# ------------ choose GPU archs ------------------------------------
+ARG CUDA_ARCHS="89"
+ENV CUDA_ARCHS=${CUDA_ARCHS}
+
+# ------------ build ------------------------------------------------
 RUN mkdir -p /app/build && cd /app/build && \
     cmake /app \
         -DCMAKE_BUILD_TYPE=Release \
         -DGGML_CUDA=ON \
-        -DCMAKE_CUDA_ARCHITECTURES=native \
+        -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
         -DWHISPER_USE_OPENMP=OFF && \
     make -j$(nproc)
 
