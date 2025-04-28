@@ -35,27 +35,23 @@ ContextGuard::~ContextGuard() { pool_->release(ctx_); }
 
 //-------------------------------------------------------------------
 // WhisperContextPool (unchanged)
+// ------------------------------------------------------------------
 WhisperContextPool::WhisperContextPool(size_t count) {
 
-    // ----- new pre-flight check -----------------------------------
+    // pre-flight: make sure the model file is present
     struct stat st;
-    if (stat(MODEL_PATH, &st) != 0) {                       // file not found
-        LOG_ERROR("Model file '" << MODEL_PATH
-                  << "' cannot be accessed (" << std::strerror(errno) << ")");
+    if (stat(MODEL_PATH, &st) != 0 || st.st_size == 0) {
+        LOG_ERROR("Model file '" << MODEL_PATH << "' is missing or empty");
         std::exit(EXIT_FAILURE);
     }
-    if (st.st_size == 0) {                                  // present but empty
-        LOG_ERROR("Model file '" << MODEL_PATH
-                  << "' is zero bytes -- did a bind-mount hide it?");
-        std::exit(EXIT_FAILURE);
-    }
-    // --------------------------------------------------------------
 
-    auto params = whisper_context_default_params();
-    params.use_gpu = false;
+    // GPU-enabled context
+    whisper_context_params params = whisper_context_default_params();
+    params.use_gpu    = true;   // enable CUDA backend 🔥
+    params.gpu_device = 0;      // first visible GPU (change if you bind multiple)
 
     for (size_t i = 0; i < count; ++i) {
-        auto* ctx = whisper_init_from_file_with_params(MODEL_PATH, params);
+        whisper_context *ctx = whisper_init_from_file_with_params(MODEL_PATH, params);
         if (!ctx) {
             LOG_ERROR("whisper_init_from_file_with_params() failed");
             std::exit(EXIT_FAILURE);

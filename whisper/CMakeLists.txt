@@ -1,27 +1,28 @@
 cmake_minimum_required(VERSION 3.10)
 project(whisper_server)
 
-# Find dependencies
-find_package(Protobuf REQUIRED)
-find_package(PkgConfig REQUIRED)
-find_package(Threads REQUIRED)
+# -------------------------------------------------------------------
+#  Dependencies
+# -------------------------------------------------------------------
+find_package(Protobuf      REQUIRED)
+find_package(PkgConfig     REQUIRED)
+find_package(Threads       REQUIRED)
 pkg_check_modules(GRPC REQUIRED grpc++)
+find_package(CUDAToolkit   REQUIRED)          # <- new
 
 message(STATUS "Using Protobuf version: ${Protobuf_VERSION}")
-message(STATUS "Using gRPC version: ${GRPC_VERSION}")
+message(STATUS "Using gRPC     version: ${GRPC_VERSION}")
+message(STATUS "CUDA toolkit   version: ${CUDAToolkit_VERSION}")
 
-# Add ggml-org whisper.cpp as a subproject (will build libggml & libwhisper)
-set(WHISPER_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/whisper.cpp")
-add_subdirectory(${WHISPER_CPP_PATH} whisper_cpp_build)
+# -------------------------------------------------------------------
+#  whisper.cpp / ggml (built as sub-project)
+# -------------------------------------------------------------------
+set(GGML_CUDA ON CACHE BOOL "Enable CUDA backend in ggml" FORCE)  # <- new
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/whisper.cpp whisper_cpp_build)
 
-# Disable GPU and SIMD in both whisper and ggml
-add_compile_definitions(
-    WHISPER_NO_ACCEL    # whisper.cpp flag
-    GGML_DISABLE_CUDA   # disable CUDA backend
-    GGML_DISABLE_METAL  # disable Metal backend
-)
-
-# Build our server
+# -------------------------------------------------------------------
+#  Server target
+# -------------------------------------------------------------------
 add_executable(whisper_server
     whisper_server.cpp
     proto/voice.pb.cc
@@ -29,7 +30,6 @@ add_executable(whisper_server
 )
 
 target_compile_options(whisper_server PRIVATE -O3 -fPIC)
-
 target_include_directories(whisper_server PRIVATE
     ${GRPC_INCLUDE_DIRS}
     ${Protobuf_INCLUDE_DIRS}
@@ -37,15 +37,14 @@ target_include_directories(whisper_server PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/proto
 )
 
-# Link against whisper and ggml libraries, plus gRPC/Protobuf
 target_link_libraries(whisper_server PRIVATE
-    whisper    # the libwhisper from add_subdirectory
-    ggml       # the libggml from add_subdirectory
+    whisper           # from whisper.cpp
+    ggml              # from whisper.cpp
     ${GRPC_LIBRARIES}
     ${Protobuf_LIBRARIES}
     Threads::Threads
+    CUDA::cudart      # <- makes CUDA runtime symbols visible
 )
 
-# Use C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

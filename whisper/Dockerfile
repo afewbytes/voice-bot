@@ -1,59 +1,59 @@
-FROM ubuntu:22.04
+# CUDA toolkit + build tools
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    libgrpc++-dev \
-    libprotobuf-dev \
-    protobuf-compiler \
-    protobuf-compiler-grpc \
-    pkg-config \
-    wget \
-    libgomp1 \
+ARG DEBIAN_FRONTEND=noninteractive
+ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+
+# -------- dependencies -------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git pkg-config wget \
+        libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
     && rm -rf /var/lib/apt/lists/*
 
+# -------- sources ------------------------------------------------------------
 WORKDIR /app
 
-# Clone ggml-org whisper.cpp and checkout a stable tag (optional)
-RUN git clone https://github.com/ggml-org/whisper.cpp.git /app/whisper.cpp && \
-    cd /app/whisper.cpp && \
-    git checkout v1.7.5
+# whisper.cpp (tag v1.7.5 ≙ server API used here)
+RUN git clone --depth 1 --branch v1.7.5 https://github.com/ggml-org/whisper.cpp.git
 
-# Download model weights
+# Swedish KB-Lab base model (change if you need another one)
 RUN mkdir -p /app/models && \
-    wget -O /app/models/kb-ggml-model.bin \
-        #https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+    wget -q -O /app/models/kb-ggml-model.bin \
         https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
 
-      #wget https://huggingface.co/KBLab/kb-whisper-large/resolve/main/ggml-model-q5_0.bin # Quantized version
-      # wget https://huggingface.co/KBLab/kb-whisper-large/resolve/main/ggml-model.bin # Non-quantized version
-      
-
-# Copy server sources & proto definitions
+# voice-bot gRPC server sources
 COPY whisper/ /app/
-COPY proto/ /app/proto/
+COPY proto/   /app/proto/
 
-# Generate gRPC bindings
-RUN protoc --proto_path=/app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
-    --plugin=protoc-gen-grpc=`which grpc_cpp_plugin` /app/proto/voice.proto
+# -------- gRPC code-gen ------------------------------------------------------
+RUN protoc -I/app/proto \
+      --cpp_out=/app/proto \
+      --grpc_out=/app/proto \
+      --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) \
+      /app/proto/voice.proto
 
-# Enable core dumps (optional)
-RUN ulimit -c unlimited
-
-# Build both whisper.cpp and the server in one step
+# -------- build --------------------------------------------------------------
 RUN mkdir -p /app/build && cd /app/build && \
     cmake /app \
-      -DWHISPER_NO_ACCEL=ON \
-      -DGGML_DISABLE_CUDA=ON \
-      -DGGML_DISABLE_METAL=ON \
-      -DGGML_SIMD=NONE \
-      -DWHISPER_USE_OPENMP=OFF && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DGGML_CUDA=ON \           # <<< enable CUDA backend
+        -DCMAKE_CUDA_ARCHITECTURES=native \
+        -DWHISPER_USE_OPENMP=OFF && \
     make -j$(nproc)
 
-# Prepare socket directory
+# -------- runtime image ------------------------------------------------------
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+# small runtime deps
+RUN apt-get update && apt-get install -y libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /app/build/whisper_server /app/
+COPY --from=build /app/models          /app/models
 RUN mkdir -p /app/sockets && chmod 777 /app/sockets
 
-# Launch the server
-CMD ["/app/build/whisper_server"]
+EXPOSE 50051
+CMD ["/app/whisper_server"]
