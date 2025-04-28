@@ -24,6 +24,7 @@ RUN git clone https://github.com/ggml-org/whisper.cpp.git /app/whisper.cpp && \
 # Download model weights
 RUN mkdir -p /app/models && \
     wget -O /app/models/kb-ggml-model.bin \
+        #https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
         https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
 
       #wget https://huggingface.co/KBLab/kb-whisper-large/resolve/main/ggml-model-q5_0.bin # Quantized version

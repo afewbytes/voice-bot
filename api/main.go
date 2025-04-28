@@ -25,10 +25,9 @@ const (
     whisperSockPath = "unix:///app/sockets/whisper.sock"
     llamaSockPath   = "unix:///app/llama-sockets/llama.sock"
     piperSockPath   = "unix:///app/piper-sockets/piper.sock"
-)
 
-// system prompt sent only on the first user turn
-const systemPrompt = "system: You are a concise conversational voice assistant. DO NOT invent user turns or ask follow‑up questions. Just answer briefly."
+	greetingText = "Hej jag heter Gunnar, vad kan jag hjälpa dig med?"
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 type WhisperServiceServer struct {
@@ -49,6 +48,41 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
         return err
     }
     defer whisperStream.CloseSend()
+
+	{
+        ttsReq, gerr := s.ttsClient.SynthesizeText(ctx, &pb.TextRequest{
+            Text:         greetingText,
+            SpeakingRate: 0.75,
+        })
+        if gerr == nil {
+            for {
+                gResp, gerr := ttsReq.Recv()
+                if gerr == io.EOF {
+                    break
+                }
+                if gerr != nil {
+                    log.Printf("[conv %s] greeting TTS error: %v", convID, gerr)
+                    break
+                }
+                if serr := stream.Send(&pb.StreamAudioResponse{
+                    AudioData:  gResp.GetAudioChunk(),
+                    SampleRate: gResp.GetSampleRate(),
+                    IsEndAudio: gResp.GetIsEnd(),
+                    Source:     pb.StreamAudioResponse_TTS,
+                }); serr != nil {
+                    return serr
+                }
+            }
+            // optional: caption the greeting for clients that show text
+            _ = stream.Send(&pb.StreamAudioResponse{
+                Text:   greetingText,
+                Source: pb.StreamAudioResponse_TTS,
+                Done:   true,
+            })
+        } else {
+            log.Printf("[conv %s] could not greet: %v", convID, gerr)
+        }
+    }
 
     errCh := make(chan error, 1)
     go func() {
@@ -80,7 +114,7 @@ func (s *WhisperServiceServer) StreamAudio(stream pb.WhisperService_StreamAudioS
             // ── build **incremental** prompt ─────────────────────────────
             var prompt string
             if firstTurn {
-				prompt = text           // no “user:” / “assistant:”
+				prompt = text 
 				firstTurn = false
 			} else {
 				prompt = text

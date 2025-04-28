@@ -40,4 +40,4 @@ RUN mkdir -p /app/llama_server/build && \
     make -j$(nproc)
 
 # 6) Pass model path directly as the first argument (no --model flag)
-CMD ["/app/llama_server/build/llama_server", "/app/models/Meta-Llama-3.1-8B-Instruct.Q8_0.gguf"]
+CMD ["/app/llama_server/build/llama_server", "/app/models/Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf"]
