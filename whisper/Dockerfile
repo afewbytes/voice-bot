@@ -26,6 +26,11 @@ RUN protoc -I/app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so && \
     echo "/usr/local/cuda/lib64/stubs" > /etc/ld.so.conf.d/cuda-stubs.conf && ldconfig
 
+    # download KB-Lab Swedish base model
+RUN mkdir -p /app/models && \
+    wget -q -O /app/models/kb-ggml-model.bin \
+    https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
+
 RUN mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \
              -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
