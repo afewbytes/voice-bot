@@ -32,19 +32,12 @@ services:
     build:
       context: .
       dockerfile: whisper/Dockerfile
-      args:
-        - CUDA_ARCHS=89          # sm_89 for RTX 4000 Ada
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    volumes:
-      - whisper-socket:/app/sockets
+      args: [CUDA_ARCHS=89]
+    runtime: nvidia
     environment:
+      - NVIDIA_VISIBLE_DEVICES=all
       - WHISPER_MODEL=kb-ggml-model.bin
+    volumes: [whisper-socket:/app/sockets]
     healthcheck:
       test: ["CMD", "test", "-S", "/app/sockets/whisper.sock"]
       interval: 2s
@@ -57,18 +50,11 @@ services:
     build:
       context: .
       dockerfile: llama_server/Dockerfile
-      args:
-        - CUDA_ARCHS=89
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      args: [CUDA_ARCHS=89]
+    runtime: nvidia
     environment:
+      - NVIDIA_VISIBLE_DEVICES=all
       - LLAMA_N_CTX=2048
-      # optionally control off-load: e.g. LLAMA_N_GPU_LAYERS=99
     volumes:
       - llama-socket:/app/llama-sockets
       - ./llama_models:/app/models
@@ -84,15 +70,10 @@ services:
     build:
       context: .
       dockerfile: piper_server/Dockerfile
-      args:
-        - CUDA_ARCHS=89
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      args: [CUDA_ARCHS=89]
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - piper-socket:/app/piper-sockets
       - ./piper_models:/app/models
