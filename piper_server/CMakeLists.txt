@@ -7,6 +7,7 @@ find_package(PkgConfig     REQUIRED)
 find_package(Threads       REQUIRED)
 pkg_check_modules(GRPC REQUIRED grpc++)
 find_package(CUDAToolkit   REQUIRED)
+find_package(spdlog REQUIRED)
 
 message(STATUS "Protobuf : ${Protobuf_VERSION}")
 message(STATUS "gRPC     : ${GRPC_VERSION}")
