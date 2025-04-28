@@ -1,5 +1,5 @@
 ###############################################################################
-# BUILD stage – compile whisper.cpp + server
+# BUILD – compile whisper.cpp + gRPC server
 ###############################################################################
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
 ARG DEBIAN_FRONTEND=noninteractive
@@ -14,44 +14,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 RUN git clone --depth 1 --branch v1.7.5 https://github.com/ggml-org/whisper.cpp.git
 
-# server sources + proto
+# ── server source + proto
 COPY whisper/ /app/
 COPY proto/   /app/proto/
+RUN protoc -Iproto --cpp_out=proto --grpc_out=proto \
+      --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) proto/voice.proto
 
-# gRPC bindings
-RUN protoc -I/app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
-      --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) /app/proto/voice.proto
+# ── CUDA stub for linking
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so && ldconfig
 
-# build
-RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so && \
-    echo "/usr/local/cuda/lib64/stubs" > /etc/ld.so.conf.d/cuda-stubs.conf && ldconfig
-
-    # download KB-Lab Swedish base model
+# ── optional: bake model into the image
 RUN mkdir -p /app/models && \
     wget -q -O /app/models/kb-ggml-model.bin \
-    https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
+        https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
 
+# ── build
 RUN mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON \
              -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
     make -j$(nproc)
 
 ###############################################################################
-# RUNTIME stage
+# RUNTIME
 ###############################################################################
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgrpc++1 libprotobuf32 && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
-
-# binary
 COPY --from=build /app/build/whisper_server /app/
-
-# libraries built in the first stage
-COPY --from=build /app/build/libwhisper.so*        /usr/local/lib/
-COPY --from=build /app/build/libggml*.so*          /usr/local/lib/
-COPY --from=build /app/build/libggml-cuda*.so*     /usr/local/lib/
+COPY --from=build /app/build/whisper_cpp_build/src/libwhisper.so*         /usr/local/lib/
+COPY --from=build /app/build/whisper_cpp_build/ggml/src/libggml*.so*       /usr/local/lib/
+COPY --from=build /app/build/whisper_cpp_build/ggml/src/libggml-cuda*.so*  /usr/local/lib/
 RUN ldconfig
 
-# model + sockets
 COPY --from=build /app/models /app/models
 RUN mkdir -p /app/sockets && chmod 777 /app/sockets
 

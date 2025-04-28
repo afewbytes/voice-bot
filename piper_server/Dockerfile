@@ -1,5 +1,5 @@
 ###############################################################################
-# BUILD stage – compile Piper + server
+# BUILD – compile Piper + server
 ###############################################################################
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
 ARG DEBIAN_FRONTEND=noninteractive
@@ -20,17 +20,15 @@ RUN git clone --depth 1 https://github.com/rhasspy/piper.git
 
 COPY piper_server/ /app/piper_server/
 COPY proto/        /app/proto/
+RUN protoc -Iproto --cpp_out=proto --grpc_out=proto \
+      --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) proto/voice.proto
 
-RUN protoc -I/app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
-      --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) /app/proto/voice.proto
-
-# build piper (downloads ORT-GPU tarball)
+# build piper (pulls ONNX Runtime GPU tarball)
 RUN cmake -S /app/piper -B /app/piper/build \
         -DONNXRUNTIME_PREFIX=${ORT_PREFIX} \
         -DONNXRUNTIME_URL=${ORT_URL} \
         -DCMAKE_INSTALL_PREFIX=/app/piper/build/install && \
-    cmake --build /app/piper/build --config Release -j$(nproc) && \
-    cmake --install /app/piper/build
+    cmake --build /app/piper/build --config Release -j$(nproc)
 
 # build piper_server
 RUN mkdir /app/piper_server/build && cd /app/piper_server/build && \
@@ -39,18 +37,18 @@ RUN mkdir /app/piper_server/build && cd /app/piper_server/build && \
     make -j$(nproc)
 
 ###############################################################################
-# RUNTIME stage
+# RUNTIME
 ###############################################################################
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgrpc++1 libprotobuf32 && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
-
 COPY --from=build /app/piper_server/build/piper_server /app/
-
-# libraries
 COPY --from=build /app/piper/build/pi/lib/libpiper_phonemize.so* /usr/local/lib/
 COPY --from=build /app/piper/build/pi/lib/libonnxruntime.so*     /usr/local/lib/
 RUN ldconfig
 
 RUN mkdir -p /app/piper-sockets /app/models && chmod 777 /app/piper-sockets
-
 CMD ["/app/piper_server", "/app/models/sv_SE-nst-medium.onnx", "/app/models/sv_SE-nst-medium.onnx.json"]
