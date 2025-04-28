@@ -32,12 +32,19 @@ services:
     build:
       context: .
       dockerfile: whisper/Dockerfile
+      args:
+        - CUDA_ARCHS=89          # sm_89 for RTX 4000 Ada
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     volumes:
       - whisper-socket:/app/sockets
-     # - whisper-models:/app/models
     environment:
-      - WHISPER_MODEL=ggml-base.bin
-      - WHISPER_USE_GPU=0
+      - WHISPER_MODEL=kb-ggml-model.bin
     healthcheck:
       test: ["CMD", "test", "-S", "/app/sockets/whisper.sock"]
       interval: 2s
