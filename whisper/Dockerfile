@@ -38,6 +38,11 @@ RUN protoc -I/app/proto \
 ARG CUDA_ARCHS="89"
 ENV CUDA_ARCHS=${CUDA_ARCHS}
 
+# --- make the CUDA stub visible to the linker ----------------------
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so \
+    /usr/local/cuda/lib64/libcuda.so && \
+    echo "/usr/local/cuda/lib64/stubs" > /etc/ld.so.conf.d/cuda-stubs.conf && ldconfig
+
 # ------------ build ------------------------------------------------
 RUN mkdir -p /app/build && cd /app/build && \
     cmake /app \
