@@ -1,12 +1,12 @@
 ###############################################################################
-# BUILD – compile Piper + server
+# BUILD – Piper + ONNX Runtime GPU + gRPC server
 ###############################################################################
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
-ARG DEBIAN_FRONTEND=noninteractive
 ARG CUDA_ARCHS="89"
 ARG ORT_VER=1.21.1
 ENV ORT_PREFIX=onnxruntime-linux-x64-gpu-cuda12-${ORT_VER}
 ENV ORT_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PREFIX}.tgz
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git pkg-config wget \
@@ -23,7 +23,7 @@ COPY proto/        /app/proto/
 RUN protoc -Iproto --cpp_out=proto --grpc_out=proto \
       --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) proto/voice.proto
 
-# build piper (pulls ONNX Runtime GPU tarball)
+# build Piper + ONNX-GPU
 RUN cmake -S /app/piper -B /app/piper/build \
         -DONNXRUNTIME_PREFIX=${ORT_PREFIX} \
         -DONNXRUNTIME_URL=${ORT_URL} \
@@ -40,14 +40,17 @@ RUN mkdir /app/piper_server/build && cd /app/piper_server/build && \
 # RUNTIME
 ###############################################################################
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgrpc++1 libprotobuf32 && \
-    rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
+
 COPY --from=build /app/piper_server/build/piper_server /app/
+
+# Piper + ORT shared libs
 COPY --from=build /app/piper/build/pi/lib/libpiper_phonemize.so* /usr/local/lib/
 COPY --from=build /app/piper/build/pi/lib/libonnxruntime.so*     /usr/local/lib/
+
+# gRPC + Protobuf
+COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc++.so*   /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libprotobuf.so* /usr/local/lib/
 RUN ldconfig
 
 RUN mkdir -p /app/piper-sockets /app/models && chmod 777 /app/piper-sockets

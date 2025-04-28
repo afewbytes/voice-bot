@@ -1,9 +1,9 @@
 ###############################################################################
-# BUILD – compile llama.cpp + gRPC server
+# BUILD – llama.cpp + gRPC server (CUDA)
 ###############################################################################
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
-ARG DEBIAN_FRONTEND=noninteractive
 ARG CUDA_ARCHS="89"
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git pkg-config wget \
@@ -30,13 +30,14 @@ RUN mkdir /app/llama_server/build && cd /app/llama_server/build && \
 # RUNTIME
 ###############################################################################
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgrpc++1 libprotobuf32 && \
-    rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
+
 COPY --from=build /app/llama_server/build/llama_server /app/
-COPY --from=build /app/llama_server/build/llama_cpp_build/libllama.so*    /usr/local/lib/
+COPY --from=build /app/llama_server/build/llama_cpp_build/libllama.so* /usr/local/lib/
+
+# gRPC + Protobuf
+COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc++.so*   /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libprotobuf.so* /usr/local/lib/
 RUN ldconfig
 
 RUN mkdir -p /app/llama-sockets && chmod 777 /app/llama-sockets
