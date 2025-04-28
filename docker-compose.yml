@@ -58,12 +58,20 @@ services:
       context: .
       dockerfile: llama_server/Dockerfile
       args:
-        - LLAMA_MODEL=llama-2-7b.Q4_K_M.gguf
+        - CUDA_ARCHS=89
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     environment:
       - LLAMA_N_CTX=2048
+      # optionally control off-load: e.g. LLAMA_N_GPU_LAYERS=99
     volumes:
       - llama-socket:/app/llama-sockets
-      - ./llama_models:/app/models      # bind-mount your local models
+      - ./llama_models:/app/models
     healthcheck:
       test: ["CMD", "test", "-S", "/app/llama-sockets/llama.sock"]
       interval: 2s
