@@ -23,11 +23,15 @@ add_executable(piper_server
 target_compile_options(piper_server PRIVATE -O3 -fPIC)
 set_target_properties(piper_server PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
+set(PIPER_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../piper")
+
 target_include_directories(piper_server PRIVATE
     ${GRPC_INCLUDE_DIRS}
     ${Protobuf_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../proto
+    ${PIPER_PATH}/src/cpp
+    ${PIPER_PATH}/build/install/include
 )
 
 target_link_libraries(piper_server PRIVATE
