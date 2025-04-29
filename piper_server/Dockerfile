@@ -66,7 +66,9 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --use_cuda \
         --cuda_home=/usr/local/cuda \
         --cudnn_home=/usr/lib/x86_64-linux-gnu \
-        --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
+        --cmake_extra_defines \
+          CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
+          onnxruntime_USE_CUDNN_FRONTEND=OFF \
         --allow_running_as_root && \
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
     ldconfig && \
