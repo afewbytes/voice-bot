@@ -37,18 +37,14 @@ RUN protoc -Iproto \
            proto/voice.proto
 
 # -----------------------------------------------------------------------------
-# 4. allow linking against the CUDA stub (build works even if host driver
-#    isn’t present at build-time; harmless if it is)
+# 4. add stub libcuda.so so linking works even if the host has no driver
+#    (we’ll delete them after the build so the real driver libs win at runtime)
 # -----------------------------------------------------------------------------
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so && \
     ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so.1
 
 # -----------------------------------------------------------------------------
 # 5. configure & build (GPU enabled)
-#    -DCMAKE_CUDA_ARCHITECTURES guarantees the binary only contains the CC you
-#      need, which keeps the build fast and the binary smaller.
-#    BUILD_SHARED_LIBS is ON by default; because we stay in the *same* image
-#    there’s no need to switch to static linking.
 # -----------------------------------------------------------------------------
 RUN mkdir -p /app/llama_server/build && \
     cd /app/llama_server/build && \
@@ -57,6 +53,9 @@ RUN mkdir -p /app/llama_server/build && \
         -DGGML_CUDA=ON \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
     make -j$(nproc)
+
+# ---- remove the stub symlinks so CUDA sees the real driver at runtime -------
+RUN rm -f /usr/local/cuda/lib64/libcuda.so /usr/local/cuda/lib64/libcuda.so.1
 
 # -----------------------------------------------------------------------------
 # 6. place for the UNIX-domain socket that docker-compose mounts
