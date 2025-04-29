@@ -8,7 +8,7 @@ FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 #######################################################################
 ARG DEBIAN_FRONTEND=noninteractive
 ARG CUDA_ARCHS=89
-ARG ORT_VER=1.21.1
+ARG ORT_VER=1.20.5
 ENV ORT_PREFIX=onnxruntime-linux-x64-gpu-${ORT_VER}
 
 ENV ORT_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PREFIX}.tgz
