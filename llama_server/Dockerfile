@@ -33,7 +33,7 @@ RUN protoc -Iproto --cpp_out=proto --grpc_out=proto \
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so && \
     ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so.1
 
-# ---- configure, build, install libs, copy binary ---------------------------
+# ---- configure, build, install libs, copy executable -----------------------
 RUN mkdir build && cd build && \
     cmake ../llama_server \
           -DCMAKE_BUILD_TYPE=Release \
@@ -42,7 +42,7 @@ RUN mkdir build && cd build && \
           -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
     make install && \
-    # ----- temporarily install the executable by hand (until your CMakeLists.txt has an install() line)
+    # until CMakeLists.txt has an install() line for the server binary:
     install -Dm755 llama_server /usr/local/bin/llama_server
 
 ########################
@@ -50,16 +50,24 @@ RUN mkdir build && cd build && \
 ########################
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
-# copy everything that was installed in /usr/local during the build stage
+# ---- bring in everything installed in /usr/local ---------------------------
 COPY --from=build /usr/local /usr/local
 
-# ensure the dynamic loader knows that directory
+# ---- copy shared libs that came from apt in the build stage ----------------
+# (grpc++, protobuf, absl, etc.); keep them in /usr/local/lib to stay tidy
+COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc++.so*          /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc++_reflection.so* /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc.so*            /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libprotobuf.so*        /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libabsl_*.so*          /usr/local/lib/
+
+# ---- make the loader aware of /usr/local/lib -------------------------------
 RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/llama.conf && ldconfig
 
-# directory for the UNIX-domain socket
+# ---- directory for the UNIX-domain socket ----------------------------------
 WORKDIR /app
 RUN mkdir -p /app/llama-sockets && chmod 777 /app/llama-sockets
 
-# launch the server
+# ---- launch the server ------------------------------------------------------
 ENTRYPOINT ["/usr/local/bin/llama_server"]
 CMD ["/app/models/Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf"]
