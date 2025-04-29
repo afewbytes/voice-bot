@@ -51,6 +51,7 @@ RUN mkdir -p /app/llama_server/build && \
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DGGML_CUDA=ON \
+        -DGGML_CUDA_FORCE_MMQ=ON \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
     make -j$(nproc)
 
