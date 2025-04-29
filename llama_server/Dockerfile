@@ -46,16 +46,16 @@ RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libc
 # -----------------------------------------------------------------------------
 # 5. configure & build (GPU enabled)
 # -----------------------------------------------------------------------------
-RUN mkdir -p /app/llama_server/build && \
-    cd /app/llama_server/build && \
-    cmake .. \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DGGML_CUDA=ON \
-        -DLLAMA_CUDA_KQUANTS=ON \
-        -DGGML_CUDA_FORCE_MMQ=ON \
-        -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
-    make -j$(nproc)
-
+  RUN mkdir -p /app/llama_server/build && \
+  cd /app/llama_server/build && \
+  cmake .. \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_CUDA=ON \
+      -DLLAMA_CUBLAS=ON \
+      -DLLAMA_CUDA_KQUANTS=ON \
+      -DLLAMA_CUDA_FORCE_MMQ=ON \
+      -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
+  make -j$(nproc)
 # ---- remove the stub symlinks so CUDA sees the real driver at runtime -------
 RUN rm -f /usr/local/cuda/lib64/libcuda.so /usr/local/cuda/lib64/libcuda.so.1
 
