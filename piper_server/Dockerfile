@@ -1,5 +1,5 @@
 ###############################################################################
-# piper_server – single-stage CUDA build (Ubuntu 22.04 + CUDA 12.4.1)
+# piper_server – single-stage CUDA build (Ubuntu 22.04 + CUDA 12.3.2 / cuDNN 9)
 ###############################################################################
 FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 
@@ -7,19 +7,18 @@ FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 # 0. build/run-time prerequisites
 #######################################################################
 ARG DEBIAN_FRONTEND=noninteractive
-ARG CUDA_ARCHS=89
-ARG ORT_VER=1.20.5
-# note the “-cuda12” that is required for 1.20.x
-ENV ORT_PREFIX=onnxruntime-linux-x64-gpu-cuda12-${ORT_VER}
-ENV ORT_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PREFIX}.tgz
+ARG CUDA_ARCHS="80;86;89"       # Ampere + Ada; override at build-time if needed
+ARG ORT_VER=1.21.1              # tag to build from source
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake git wget pkg-config \
+        build-essential cmake git wget pkg-config ninja-build \
+        python3 python3-dev python3-pip \
         libgomp1 \
         libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
         libsndfile1-dev libespeak-ng-dev \
         libopus-dev libopusfile-dev libsamplerate0-dev \
         libspdlog-dev \
+    && python3 -m pip install --no-cache-dir --upgrade pip \
     && rm -rf /var/lib/apt/lists/*
 
 #######################################################################
@@ -48,20 +47,27 @@ RUN protoc -I /app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
     --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) /app/proto/voice.proto
 
 #######################################################################
-# 4. ONNX Runtime GPU download (no build needed)
+# 4. build ONNX Runtime GPU **from source**
 #######################################################################
-RUN wget -q ${ORT_URL} \
- && tar -xzf ${ORT_PREFIX}.tgz \
- && mv ${ORT_PREFIX} /opt/onnxruntime \
- # expose ORT libs (main + providers) to the dynamic linker
- && cp /opt/onnxruntime/lib/libonnxruntime*.so* /usr/local/lib/ \
- && ldconfig
+RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxruntime && \
+    /onnxruntime/build.sh \
+        --config Release \
+        --skip_tests \
+        --parallel \
+        --build_shared_lib \
+        --build_cuda \
+        --cuda_home=/usr/local/cuda \
+        --cudnn_home=/usr/lib/x86_64-linux-gnu \
+        --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=\"${CUDA_ARCHS}\" && \
+    cp /onnxruntime/build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
+    ldconfig && \
+    rm -rf /onnxruntime   # keep the image slim
 
 #######################################################################
-# 5. build Piper (uses the pre-downloaded ORT)
+# 5. build Piper (links to the freshly-built ORT)
 #######################################################################
 RUN cmake -S /app/piper -B /app/piper/build \
-        -DONNXRUNTIME_PREFIX=/opt/onnxruntime \
+        -DONNXRUNTIME_PREFIX=/usr/local \
         -DCMAKE_INSTALL_PREFIX=/app/piper/build/install && \
     cmake --build /app/piper/build --config Release -j$(nproc) && \
     cmake --install /app/piper/build
@@ -74,7 +80,7 @@ RUN mkdir -p build && cd build && \
     cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
-        -DONNXRUNTIME_PREFIX=/opt/onnxruntime && \
+        -DONNXRUNTIME_PREFIX=/usr/local && \
     make -j$(nproc)
 
 #######################################################################
