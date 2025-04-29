@@ -17,13 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
         libsndfile1-dev libespeak-ng-dev \
         libopus-dev libopusfile-dev libsamplerate0-dev \
-        libspdlog-dev \
+        libspdlog-dev libfmt-dev \
         g++-12 && \
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 60 \
                         --slave  /usr/bin/g++ g++ /usr/bin/g++-12 && \
     rm -rf /var/lib/apt/lists/*
 
-# ── NEWER CMake + psutil ─────────────────────────────────────────────
+# ── newer CMake + psutil ─────────────────────────────────────────────
 RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.29.0/cmake-3.29.0-linux-x86_64.tar.gz \
  && tar -xzf cmake-3.29.0-linux-x86_64.tar.gz --strip-components=1 -C /usr/local \
  && rm cmake-3.29.0-linux-x86_64.tar.gz \
@@ -43,7 +43,7 @@ RUN mkdir -p /tmp/pp && \
     ldconfig && cd / && rm -rf /tmp/pp
 
 #######################################################################
-# 2. Piper and server sources
+# 2. Piper + server sources
 #######################################################################
 WORKDIR /app
 RUN git clone --depth 1 https://github.com/rhasspy/piper.git
@@ -76,11 +76,14 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
     cd /app && rm -rf onnxruntime
 
 #######################################################################
-# 5. build Piper (links to the freshly-built ORT)
+# 5. build Piper (linking to system fmt/spdlog, fresh ORT)
 #######################################################################
 RUN cmake -S /app/piper -B /app/piper/build \
         -DONNXRUNTIME_PREFIX=/usr/local \
-        -DCMAKE_INSTALL_PREFIX=/app/piper/build/install && \
+        -DCMAKE_INSTALL_PREFIX=/app/piper/build/install \
+        -DPIPER_USE_SYSTEM_FMT=ON \
+        -DPIPER_USE_SYSTEM_SPDLOG=ON \
+        -DPIPER_USE_SYSTEM_PHONEMIZE=ON && \
     cmake --build /app/piper/build --config Release -j$(nproc) && \
     cmake --install /app/piper/build
 
