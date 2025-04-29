@@ -33,7 +33,7 @@ RUN protoc -Iproto --cpp_out=proto --grpc_out=proto \
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so && \
     ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so.1
 
-# ---- configure, build *and install* ----------------------------------------
+# ---- configure, build, install libs, copy binary ---------------------------
 RUN mkdir build && cd build && \
     cmake ../llama_server \
           -DCMAKE_BUILD_TYPE=Release \
@@ -41,23 +41,25 @@ RUN mkdir build && cd build && \
           -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
           -DCMAKE_INSTALL_PREFIX=/usr/local && \
     make -j$(nproc) && \
-    make install          # installs libllama.so + llama_server under /usr/local
+    make install && \
+    # ----- temporarily install the executable by hand (until your CMakeLists.txt has an install() line)
+    install -Dm755 llama_server /usr/local/bin/llama_server
 
 ########################
 # 2. RUNTIME STAGE
 ########################
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
-# copy *everything* that was installed in /usr/local
+# copy everything that was installed in /usr/local during the build stage
 COPY --from=build /usr/local /usr/local
 
-# make sure the dynamic loader knows that directory
+# ensure the dynamic loader knows that directory
 RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/llama.conf && ldconfig
 
 # directory for the UNIX-domain socket
 WORKDIR /app
 RUN mkdir -p /app/llama-sockets && chmod 777 /app/llama-sockets
 
-# expose the server
+# launch the server
 ENTRYPOINT ["/usr/local/bin/llama_server"]
 CMD ["/app/models/Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf"]
