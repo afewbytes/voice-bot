@@ -1,5 +1,5 @@
 ###############################################################################
-# CMakeLists.txt – piper_server (CUDA-enabled, ORT 1.22.0 drop-in)
+# CMakeLists.txt – piper_server (CUDA-enabled)
 ###############################################################################
 
 cmake_minimum_required(VERSION 3.10)
@@ -21,13 +21,15 @@ message(STATUS "Using CUDA      version: ${CUDAToolkit_VERSION}")
 message(STATUS "Using spdlog    version: ${spdlog_VERSION}")
 
 # ---------------------------------------------------------------------------
-# 2. Paths – Piper checkout + ORT include
+# 2. Paths – Piper checkout
 # ---------------------------------------------------------------------------
 set(PIPER_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../piper")
-set(ORT_INC_DIR "/opt/onnxruntime/include")         # packaged headers
+
+# onnxruntime headers copied here by Piper’s build/install step
+set(ORT_INC_DIR "${PIPER_PATH}/build/pi/include")      # ★ NEW
 
 # ---------------------------------------------------------------------------
-# 3. Libraries
+# 3. Find libs built by Piper / system
 # ---------------------------------------------------------------------------
 find_library(PIPER_PHONEMIZE_LIBRARY piper_phonemize
     PATHS ${PIPER_PATH}/build/pi/lib
@@ -46,13 +48,13 @@ include_directories(
     ${GRPC_INCLUDE_DIRS}
     ${Protobuf_INCLUDE_DIRS}
     ${PIPER_PATH}/src/cpp            # piper.hpp + helpers
-    ${ORT_INC_DIR}
-    /usr/local/include               # fmt, spdlog …
+    ${ORT_INC_DIR}                   # ★ add ORT headers
+    /usr/local/include               # fmt, spdlog, etc.
     ${spdlog_INCLUDE_DIRS}
 )
 
 link_directories(
-    ${PIPER_PATH}/build/pi/lib       # ORT copy + phonemize
+    ${PIPER_PATH}/build/pi/lib       # ORT + phonemize
 )
 
 # ---------------------------------------------------------------------------
