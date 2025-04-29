@@ -21,26 +21,20 @@ message(STATUS "Using CUDA      version: ${CUDAToolkit_VERSION}")
 message(STATUS "Using spdlog    version: ${spdlog_VERSION}")
 
 # ---------------------------------------------------------------------------
-# 2. Paths – Piper checkout and vendored ORT-GPU
+# 2. Paths – Piper checkout
 # ---------------------------------------------------------------------------
 set(PIPER_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../piper")
 
-set(ORT_ROOT     "${PIPER_PATH}/build/pi")
-set(ORT_INC_DIR  "${ORT_ROOT}/include")
-set(ORT_LIB_DIR  "${ORT_ROOT}/lib")
-
 # ---------------------------------------------------------------------------
-# 3. Find libs built by Piper
+# 3. Find libs built by Piper / system
 # ---------------------------------------------------------------------------
 find_library(PIPER_PHONEMIZE_LIBRARY piper_phonemize
     PATHS ${PIPER_PATH}/build/pi/lib
     REQUIRED)
 message(STATUS "Found Piper Phonemize library: ${PIPER_PHONEMIZE_LIBRARY}")
 
-find_library(ONNX_RUNTIME_LIBRARY onnxruntime
-    PATHS  ${ORT_LIB_DIR}
-    NO_DEFAULT_PATH
-    REQUIRED)
+# ONNX Runtime was installed system-wide into /usr/local/lib by the Dockerfile
+find_library(ONNX_RUNTIME_LIBRARY onnxruntime REQUIRED)
 message(STATUS "Found ONNX Runtime library: ${ONNX_RUNTIME_LIBRARY}")
 
 # ---------------------------------------------------------------------------
@@ -51,13 +45,13 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../proto
     ${GRPC_INCLUDE_DIRS}
     ${Protobuf_INCLUDE_DIRS}
-    ${PIPER_PATH}/src/cpp            # piper.hpp + helpers
-    ${ORT_INC_DIR}                   # onnxruntime_cxx_api.h
+    ${PIPER_PATH}/src/cpp        # piper.hpp + helpers
+    /usr/local/include           # onnxruntime_cxx_api.h
     ${spdlog_INCLUDE_DIRS}
 )
 
 link_directories(
-    ${PIPER_PATH}/build/pi/lib       # ORT + phonemize
+    ${PIPER_PATH}/build/pi/lib   # ORT (copied by Piper) + phonemize
 )
 
 # ---------------------------------------------------------------------------
@@ -67,7 +61,7 @@ add_executable(piper_server
     piper_server.cpp
     ../proto/voice.pb.cc
     ../proto/voice.grpc.pb.cc
-    ${PIPER_PATH}/src/cpp/piper.cpp      # ★ correct location of piper.cpp
+    ${PIPER_PATH}/src/cpp/piper.cpp   # ★ correct location of piper.cpp
 )
 
 target_compile_options(piper_server PRIVATE -O3 -fPIC)

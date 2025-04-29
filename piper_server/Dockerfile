@@ -18,15 +18,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsndfile1-dev libespeak-ng-dev \
         libopus-dev libopusfile-dev libsamplerate0-dev \
         libspdlog-dev \
-    && rm -rf /var/lib/apt/lists/*
+        g++-12 && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 60 \
+                        --slave  /usr/bin/g++ g++ /usr/bin/g++-12 && \
+    rm -rf /var/lib/apt/lists/*
 
-# ── NEWER CMAKE + psutil ────────────────────────────────────────────────────⬅️
+# ── NEWER CMake + psutil ─────────────────────────────────────────────
 RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.29.0/cmake-3.29.0-linux-x86_64.tar.gz \
  && tar -xzf cmake-3.29.0-linux-x86_64.tar.gz --strip-components=1 -C /usr/local \
  && rm cmake-3.29.0-linux-x86_64.tar.gz \
  && ln -sf /usr/local/bin/cmake /usr/bin/cmake \
  && python3 -m pip install --no-cache-dir psutil
-# ────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
 #######################################################################
 # 1. extra runtime libs: piper-phonemize + eSpeak-NG data
@@ -40,7 +43,7 @@ RUN mkdir -p /tmp/pp && \
     ldconfig && cd / && rm -rf /tmp/pp
 
 #######################################################################
-# 2. Piper + your server sources
+# 2. Piper and server sources
 #######################################################################
 WORKDIR /app
 RUN git clone --depth 1 https://github.com/rhasspy/piper.git
@@ -66,9 +69,7 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --use_cuda \
         --cuda_home=/usr/local/cuda \
         --cudnn_home=/usr/lib/x86_64-linux-gnu \
-        --cmake_extra_defines \
-          CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
-          onnxruntime_DISABLE_CONTRIB_OPS=ON \
+        --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
         --allow_running_as_root && \
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
     ldconfig && \
