@@ -1,16 +1,16 @@
 ###############################################################################
-# piper_server – one-stage CUDA build (Ubuntu 22.04 + CUDA 12.4.1)
+# piper_server – single-stage CUDA build (Ubuntu 22.04 + CUDA 12.4.1)
 ###############################################################################
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
 #######################################################################
 # 0. build/run-time prerequisites
 #######################################################################
-ARG  DEBIAN_FRONTEND=noninteractive
-ARG  CUDA_ARCHS=89
-ARG  ORT_VER=1.21.1
+ARG DEBIAN_FRONTEND=noninteractive
+ARG CUDA_ARCHS=89                    # 8.9 = Ada/Lovelace (RTX 4000 SFF)
+ARG ORT_VER=1.21.1                   # GPU build already linked against CUDA 12
 
-# → pre-built ONNX Runtime GPU tarball that matches CUDA 12
+# current file name (since 1.21.0 there is no “-cuda12” in the name)
 ENV ORT_PREFIX=onnxruntime-linux-x64-gpu-${ORT_VER}
 ENV ORT_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PREFIX}.tgz
 
@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 #######################################################################
-# 1. extra runtime libs: piper-phonemize + espeak-data
+# 1. extra runtime libs: piper-phonemize + eSpeak-NG data
 #######################################################################
 RUN mkdir -p /tmp/pp && \
     cd /tmp/pp && \
@@ -51,11 +51,15 @@ RUN protoc -I /app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
 #######################################################################
 # 4. ONNX Runtime GPU download (no build needed)
 #######################################################################
-RUN wget -q ${ORT_URL} && tar -xzf ${ORT_PREFIX}.tgz && \
-    mv ${ORT_PREFIX} /opt/onnxruntime
+RUN wget -q ${ORT_URL} \
+ && tar -xzf ${ORT_PREFIX}.tgz \
+ && mv ${ORT_PREFIX} /opt/onnxruntime \
+ # expose ORT libs (main + providers) to the dynamic linker
+ && cp /opt/onnxruntime/lib/libonnxruntime*.so* /usr/local/lib/ \
+ && ldconfig
 
 #######################################################################
-# 5. build Piper (downloads nothing now – we already have ORT)
+# 5. build Piper (uses the pre-downloaded ORT)
 #######################################################################
 RUN cmake -S /app/piper -B /app/piper/build \
         -DONNXRUNTIME_PREFIX=/opt/onnxruntime \
@@ -78,7 +82,7 @@ RUN mkdir -p build && cd build && \
 # 7. runtime housekeeping
 #######################################################################
 RUN mkdir -p /app/piper-sockets /app/models && chmod 777 /app/piper-sockets
-RUN ldconfig
+RUN ldconfig                       # final refresh
 
 #######################################################################
 # 8. entry-point
