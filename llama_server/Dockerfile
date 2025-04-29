@@ -50,10 +50,9 @@ RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libc
   cd /app/llama_server/build && \
   cmake .. \
       -DCMAKE_BUILD_TYPE=Release \
-      -DLLAMA_CUDA=ON \
-      -DLLAMA_CUBLAS=ON \
-      -DLLAMA_CUDA_KQUANTS=ON \
-      -DLLAMA_CUDA_FORCE_MMQ=ON \
+      -DGGML_CUDA=ON \
+      -DGGML_CUDA_KQUANTS=ON \
+      -DGGML_CUDA_FORCE_MMQ=ON \
       -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
   make -j$(nproc)
 # ---- remove the stub symlinks so CUDA sees the real driver at runtime -------

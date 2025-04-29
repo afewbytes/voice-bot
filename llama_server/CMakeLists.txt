@@ -17,7 +17,10 @@ message(STATUS "CUDA toolkit   version: ${CUDAToolkit_VERSION}")
 # -------------------------------------------------------------------
 #  llama.cpp sub-project (GPU enabled)
 # -------------------------------------------------------------------
-set(GGML_CUDA ON CACHE BOOL "Enable CUDA backend in ggml" FORCE)
+set(GGML_CUDA            ON  CACHE BOOL "Enable CUDA backend"           FORCE)
+set(GGML_CUDA_KQUANTS    ON  CACHE BOOL "Enable K-quant CUDA kernels"   FORCE)
+set(GGML_CUDA_FORCE_MMQ  ON  CACHE BOOL "Force MMQ path where needed"   FORCE)
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp llama_cpp_build)
 
 # -------------------------------------------------------------------
