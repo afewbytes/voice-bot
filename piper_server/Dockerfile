@@ -69,6 +69,7 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --cmake_extra_defines \
           CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
           onnxruntime_USE_CUDNN_FRONTEND=OFF \
+          onnxruntime_USE_FLASH_ATTENTION=OFF \
         --allow_running_as_root && \
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
     ldconfig && \
