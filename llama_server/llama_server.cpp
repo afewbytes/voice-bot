@@ -115,6 +115,7 @@ public:
 
         ggml_backend_load_all();
         llama_model_params mp = llama_model_default_params();
+        llama_model_apply_env(&mp);
         model_ = llama_model_load_from_file(model_path.c_str(), mp);
         if(!model_) throw std::runtime_error("failed to load model");
 
