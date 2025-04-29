@@ -11,8 +11,8 @@ ARG  CUDA_ARCHS=89
 ARG  ORT_VER=1.21.1
 
 # → pre-built ONNX Runtime GPU tarball that matches CUDA 12
-ENV  ORT_PREFIX=onnxruntime-linux-x64-gpu-cuda12-${ORT_VER}
-ENV  ORT_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PREFIX}.tgz
+ENV ORT_PREFIX=onnxruntime-linux-x64-gpu-${ORT_VER}
+ENV ORT_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PREFIX}.tgz
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git wget pkg-config \
