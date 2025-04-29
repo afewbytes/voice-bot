@@ -1,16 +1,15 @@
 ###############################################################################
-# piper_server – single-stage CUDA build (Ubuntu 22.04 + CUDA 12.4.1)
+# piper_server – single-stage build, CUDA 12.4 + cuDNN 9 (Ubuntu 22.04)
 ###############################################################################
-FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
+FROM nvidia/cudnn:9-devel-ubuntu22.04
 
 #######################################################################
 # 0. build/run-time prerequisites
 #######################################################################
-ARG DEBIAN_FRONTEND=noninteractive
-ARG CUDA_ARCHS=89
-ARG ORT_VER=1.21.1
+ARG  DEBIAN_FRONTEND=noninteractive
+ARG  CUDA_ARCHS=89
+ARG  ORT_VER=1.21.1
 
-# current file name (since 1.21.0 there is no “-cuda12” in the name)
 ENV ORT_PREFIX=onnxruntime-linux-x64-gpu-${ORT_VER}
 ENV ORT_URL=https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PREFIX}.tgz
 
@@ -24,10 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 #######################################################################
-# 1. extra runtime libs: piper-phonemize + eSpeak-NG data
+# 1. piper-phonemize + eSpeak-NG data
 #######################################################################
-RUN mkdir -p /tmp/pp && \
-    cd /tmp/pp && \
+RUN mkdir -p /tmp/pp && cd /tmp/pp && \
     wget -q https://github.com/rhasspy/piper-phonemize/releases/download/v1.1.0/libpiper_phonemize-amd64.tar.gz && \
     tar -xf libpiper_phonemize-amd64.tar.gz && \
     cp -a lib/. /usr/local/lib/ && \
@@ -35,7 +33,7 @@ RUN mkdir -p /tmp/pp && \
     ldconfig && cd / && rm -rf /tmp/pp
 
 #######################################################################
-# 2. source code
+# 2. source checkout
 #######################################################################
 WORKDIR /app
 RUN git clone --depth 1 https://github.com/rhasspy/piper.git
@@ -43,18 +41,17 @@ COPY piper_server/ /app/piper_server/
 COPY proto/        /app/proto/
 
 #######################################################################
-# 3. protobuf / gRPC stubs
+# 3. gRPC / protobuf stubs
 #######################################################################
 RUN protoc -I /app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
     --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) /app/proto/voice.proto
 
 #######################################################################
-# 4. ONNX Runtime GPU download (no build needed)
+# 4. ONNX Runtime GPU download
 #######################################################################
 RUN wget -q ${ORT_URL} \
  && tar -xzf ${ORT_PREFIX}.tgz \
  && mv ${ORT_PREFIX} /opt/onnxruntime \
- # expose ORT libs (main + providers) to the dynamic linker
  && cp /opt/onnxruntime/lib/libonnxruntime*.so* /usr/local/lib/ \
  && ldconfig
 
@@ -82,7 +79,7 @@ RUN mkdir -p build && cd build && \
 # 7. runtime housekeeping
 #######################################################################
 RUN mkdir -p /app/piper-sockets /app/models && chmod 777 /app/piper-sockets
-RUN ldconfig
+RUN ldconfig                                   # final linker refresh
 
 #######################################################################
 # 8. entry-point
