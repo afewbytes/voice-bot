@@ -20,10 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libspdlog-dev libfmt-dev \
         g++-12 && \
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 60 \
-                        --slave  /usr/bin/g++ g++ /usr/bin/g++-12 && \
+                        --slave /usr/bin/g++ g++ /usr/bin/g++-12 && \
     rm -rf /var/lib/apt/lists/*
 
-# ── newer CMake + psutil ─────────────────────────────────────────────
+# ── modern CMake + psutil (Piper needs ≥3.27) ────────────────────────
 RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.29.0/cmake-3.29.0-linux-x86_64.tar.gz \
  && tar -xzf cmake-3.29.0-linux-x86_64.tar.gz --strip-components=1 -C /usr/local \
  && rm cmake-3.29.0-linux-x86_64.tar.gz \
@@ -32,18 +32,17 @@ RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.29.0/cmake-3.2
 # ─────────────────────────────────────────────────────────────────────
 
 #######################################################################
-# 1. extra runtime libs: piper-phonemize + eSpeak-NG data
+# 1. piper-phonemize + eSpeak-NG data
 #######################################################################
-RUN mkdir -p /tmp/pp && \
-    cd /tmp/pp && \
+RUN mkdir -p /tmp/pp && cd /tmp/pp && \
     wget -q https://github.com/rhasspy/piper-phonemize/releases/download/v1.1.0/libpiper_phonemize-amd64.tar.gz && \
     tar -xf libpiper_phonemize-amd64.tar.gz && \
     cp -a lib/. /usr/local/lib/ && \
-    cp -a lib/espeak-ng-data /usr/share/ && \
-    ldconfig && cd / && rm -rf /tmp/pp
+    cp -a lib/espeak-ng-data /usr/share/ && ldconfig && \
+    cd / && rm -rf /tmp/pp
 
 #######################################################################
-# 2. Piper + server sources
+# 2. Piper + gRPC proto sources
 #######################################################################
 WORKDIR /app
 RUN git clone --depth 1 https://github.com/rhasspy/piper.git
@@ -51,7 +50,7 @@ COPY piper_server/ /app/piper_server/
 COPY proto/        /app/proto/
 
 #######################################################################
-# 3. protobuf / gRPC stubs
+# 3. generate gRPC stubs
 #######################################################################
 RUN protoc -I /app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
     --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) /app/proto/voice.proto
@@ -71,12 +70,13 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --cudnn_home=/usr/lib/x86_64-linux-gnu \
         --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
         --allow_running_as_root && \
+    # copy libs and headers for system-wide use
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
-    ldconfig && \
+    cp -r build/Linux/Release/include /usr/local && ldconfig && \
     cd /app && rm -rf onnxruntime
 
 #######################################################################
-# 5. build Piper (linking to system fmt/spdlog, fresh ORT)
+# 5. build Piper (uses the freshly-built ORT)
 #######################################################################
 RUN cmake -S /app/piper -B /app/piper/build \
         -DONNXRUNTIME_PREFIX=/usr/local \
