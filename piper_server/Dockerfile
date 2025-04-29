@@ -72,7 +72,7 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --allow_running_as_root && \
     # copy libs and headers for system-wide use
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
-    cp -r build/Linux/Release/install/include /usr/local && ldconfig && \
+    cp -r include /usr/local && ldconfig && \
     cd /app && rm -rf onnxruntime
 
 #######################################################################
