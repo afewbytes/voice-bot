@@ -7,8 +7,8 @@ FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 # 0. build / run-time prerequisites
 #######################################################################
 ARG DEBIAN_FRONTEND=noninteractive
-ARG CUDA_ARCHS="80;86;89"          # Ampere + Ada; override at build-time if needed
-ARG ORT_VER=1.21.1                 # tag to build from source
+ARG CUDA_ARCHS="80;86;89"
+ARG ORT_VER=1.21.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git wget pkg-config ninja-build \
@@ -50,8 +50,8 @@ RUN protoc -I /app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
 # 4. build ONNX Runtime GPU **from source**
 #######################################################################
 RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxruntime && \
-    cd onnxruntime && \            # ⬅️ enter the repo
-    ./build.sh \                   # ⬅️ run the script from there
+    cd onnxruntime && \
+    ./build.sh \
         --config Release \
         --skip_tests \
         --parallel \
