@@ -7,7 +7,7 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 # 0. build/run-time prerequisites
 #######################################################################
 ARG  DEBIAN_FRONTEND=noninteractive
-ARG  CUDA_ARCHS=89                 # 8.9 = Lovelace / Ada (RTX 4000 SFF)
+ARG  CUDA_ARCHS=89
 ARG  ORT_VER=1.21.1
 
 # → pre-built ONNX Runtime GPU tarball that matches CUDA 12
@@ -78,7 +78,7 @@ RUN mkdir -p build && cd build && \
 # 7. runtime housekeeping
 #######################################################################
 RUN mkdir -p /app/piper-sockets /app/models && chmod 777 /app/piper-sockets
-RUN ldconfig                          # final library cache refresh
+RUN ldconfig
 
 #######################################################################
 # 8. entry-point
