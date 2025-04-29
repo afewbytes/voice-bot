@@ -31,7 +31,7 @@ RUN mkdir -p /tmp/pp && \
     wget -q https://github.com/rhasspy/piper-phonemize/releases/download/v1.1.0/libpiper_phonemize-amd64.tar.gz && \
     tar -xf libpiper_phonemize-amd64.tar.gz && \
     cp -a lib/. /usr/local/lib/ && \
-    cp -a espeak-ng-data /usr/share/ && \
+    cp -a lib/espeak-ng-data /usr/share/ && \
     ldconfig && cd / && rm -rf /tmp/pp
 
 #######################################################################
