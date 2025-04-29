@@ -25,6 +25,9 @@ message(STATUS "Using spdlog    version: ${spdlog_VERSION}")
 # ---------------------------------------------------------------------------
 set(PIPER_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../piper")
 
+# onnxruntime headers copied here by Piper’s build/install step
+set(ORT_INC_DIR "${PIPER_PATH}/build/pi/include")      # ★ NEW
+
 # ---------------------------------------------------------------------------
 # 3. Find libs built by Piper / system
 # ---------------------------------------------------------------------------
@@ -33,7 +36,6 @@ find_library(PIPER_PHONEMIZE_LIBRARY piper_phonemize
     REQUIRED)
 message(STATUS "Found Piper Phonemize library: ${PIPER_PHONEMIZE_LIBRARY}")
 
-# ONNX Runtime was installed system-wide into /usr/local/lib by the Dockerfile
 find_library(ONNX_RUNTIME_LIBRARY onnxruntime REQUIRED)
 message(STATUS "Found ONNX Runtime library: ${ONNX_RUNTIME_LIBRARY}")
 
@@ -45,13 +47,14 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../proto
     ${GRPC_INCLUDE_DIRS}
     ${Protobuf_INCLUDE_DIRS}
-    ${PIPER_PATH}/src/cpp        # piper.hpp + helpers
-    /usr/local/include           # onnxruntime_cxx_api.h
+    ${PIPER_PATH}/src/cpp            # piper.hpp + helpers
+    ${ORT_INC_DIR}                   # ★ add ORT headers
+    /usr/local/include               # fmt, spdlog, etc.
     ${spdlog_INCLUDE_DIRS}
 )
 
 link_directories(
-    ${PIPER_PATH}/build/pi/lib   # ORT (copied by Piper) + phonemize
+    ${PIPER_PATH}/build/pi/lib       # ORT + phonemize
 )
 
 # ---------------------------------------------------------------------------
@@ -61,7 +64,7 @@ add_executable(piper_server
     piper_server.cpp
     ../proto/voice.pb.cc
     ../proto/voice.grpc.pb.cc
-    ${PIPER_PATH}/src/cpp/piper.cpp   # ★ correct location of piper.cpp
+    ${PIPER_PATH}/src/cpp/piper.cpp
 )
 
 target_compile_options(piper_server PRIVATE -O3 -fPIC)
