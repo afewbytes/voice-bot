@@ -1,5 +1,5 @@
 ###############################################################################
-# CMakeLists.txt – piper_server (CUDA-enabled, local ORT + phonemize)
+# CMakeLists.txt – piper_server (CUDA-enabled, source-built ORT)
 ###############################################################################
 
 cmake_minimum_required(VERSION 3.10)
@@ -21,17 +21,16 @@ message(STATUS "Using CUDA      version: ${CUDAToolkit_VERSION}")
 message(STATUS "Using spdlog    version: ${spdlog_VERSION}")
 
 # ---------------------------------------------------------------------------
-# 2. Paths – Piper checkout + ORT headers staged by Dockerfile
+# 2. Paths – Piper checkout + ORT headers copied by Piper build
 # ---------------------------------------------------------------------------
 set(PIPER_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../piper")
-set(ORT_INC_DIR "/usr/local/include")      # copied in Docker step 4
+set(ORT_INC_DIR "${PIPER_PATH}/build/pi/include")   # copied in step 5
 
 # ---------------------------------------------------------------------------
-# 3. Libraries built by Piper
+# 3. Libraries
 # ---------------------------------------------------------------------------
 find_library(PIPER_PHONEMIZE_LIBRARY piper_phonemize
     PATHS ${PIPER_PATH}/build/pi/lib
-    NO_DEFAULT_PATH            # ← use *only* the fresh build
     REQUIRED)
 message(STATUS "Found Piper Phonemize library: ${PIPER_PHONEMIZE_LIBRARY}")
 
@@ -46,18 +45,18 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/../proto
     ${GRPC_INCLUDE_DIRS}
     ${Protobuf_INCLUDE_DIRS}
-    ${PIPER_PATH}/src/cpp
-    ${ORT_INC_DIR}
-    /usr/local/include               # fmt / spdlog
+    ${PIPER_PATH}/src/cpp          # piper.hpp + helpers
+    ${ORT_INC_DIR}                 # ORT C/C++ API
+    /usr/local/include             # fmt, spdlog, headers we copied
     ${spdlog_INCLUDE_DIRS}
 )
 
 link_directories(
-    ${PIPER_PATH}/build/pi/lib
+    ${PIPER_PATH}/build/pi/lib     # ORT + phonemize from Piper build
 )
 
 # ---------------------------------------------------------------------------
-# 5. Executable
+# 5. Build the executable
 # ---------------------------------------------------------------------------
 add_executable(piper_server
     piper_server.cpp

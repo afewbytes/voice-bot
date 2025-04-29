@@ -1,5 +1,5 @@
 ###############################################################################
-# piper_server – CUDA 12.3 + cuDNN 9 (Ubuntu 22.04) • source-built ONNX Runtime
+# piper_server – single-stage CUDA build (Ubuntu 22.04 + CUDA 12.3.2 / cuDNN 9)
 ###############################################################################
 FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 
@@ -7,8 +7,8 @@ FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 # 0. build / run-time prerequisites
 #######################################################################
 ARG DEBIAN_FRONTEND=noninteractive
-ARG CUDA_ARCHS="80;86;89"          # 80=Ampere, 86=GA10x, 89=Ada
-ARG ORT_VER=1.21.1                 # tag we compile
+ARG CUDA_ARCHS="80;86;89"
+ARG ORT_VER=1.21.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git wget pkg-config ninja-build \
@@ -20,26 +20,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libspdlog-dev libfmt-dev \
         g++-12 && \
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 60 \
-                        --slave  /usr/bin/g++ g++ /usr/bin/g++-12 && \
+                        --slave /usr/bin/g++ g++ /usr/bin/g++-12 && \
     rm -rf /var/lib/apt/lists/*
 
 # ── modern CMake + psutil (Piper needs ≥3.27) ────────────────────────
 RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.29.0/cmake-3.29.0-linux-x86_64.tar.gz \
  && tar -xzf cmake-3.29.0-linux-x86_64.tar.gz --strip-components=1 -C /usr/local \
- && rm  cmake-3.29.0-linux-x86_64.tar.gz && \
-    ln -sf /usr/local/bin/cmake /usr/bin/cmake && \
-    python3 -m pip install --no-cache-dir psutil
+ && rm cmake-3.29.0-linux-x86_64.tar.gz \
+ && ln -sf /usr/local/bin/cmake /usr/bin/cmake \
+ && python3 -m pip install --no-cache-dir psutil
 # ─────────────────────────────────────────────────────────────────────
 
 #######################################################################
-# 1. eSpeak-NG voice data  (we will build our own libpiper_phonemize)
+# 1. piper-phonemize + eSpeak-NG data
 #######################################################################
-RUN mkdir -p /usr/share && \
-    wget -qO- https://github.com/rhasspy/piper-phonemize/releases/download/v1.1.0/libpiper_phonemize-amd64.tar.gz \
-      | tar -xz --strip-components=2 -C /usr/share espeak-ng-data
+RUN mkdir -p /tmp/pp && cd /tmp/pp && \
+    wget -q https://github.com/rhasspy/piper-phonemize/releases/download/v1.1.0/libpiper_phonemize-amd64.tar.gz && \
+    tar -xf libpiper_phonemize-amd64.tar.gz && \
+    cp -a lib/. /usr/local/lib/ && \
+    cp -a lib/espeak-ng-data /usr/share/ && ldconfig && \
+    cd / && rm -rf /tmp/pp
 
 #######################################################################
-# 2. Piper + server sources
+# 2. Piper + gRPC proto sources
 #######################################################################
 WORKDIR /app
 RUN git clone --depth 1 https://github.com/rhasspy/piper.git
@@ -67,24 +70,22 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --cudnn_home=/usr/lib/x86_64-linux-gnu \
         --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
         --allow_running_as_root && \
-    # make libs + headers globally visible
+    # copy libs and headers for system-wide use
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
     cp -r include /usr/local && ldconfig && \
     cd /app && rm -rf onnxruntime
 
 #######################################################################
-# 5. build Piper (links to freshly-built ORT, system fmt/spdlog)
+# 5. build Piper (uses the freshly-built ORT)
 #######################################################################
 RUN cmake -S /app/piper -B /app/piper/build \
         -DONNXRUNTIME_PREFIX=/usr/local \
         -DCMAKE_INSTALL_PREFIX=/app/piper/build/install \
         -DPIPER_USE_SYSTEM_FMT=ON \
         -DPIPER_USE_SYSTEM_SPDLOG=ON \
-        -DPIPER_USE_SYSTEM_PHONEMIZE=OFF && \
+        -DPIPER_USE_SYSTEM_PHONEMIZE=ON && \
     cmake --build /app/piper/build --config Release -j$(nproc) && \
-    cmake --install /app/piper/build && \
-    # expose freshly-built libpiper_phonemize
-    cp /app/piper/build/pi/lib/libpiper_phonemize.so /usr/local/lib/ && ldconfig
+    cmake --install /app/piper/build
 
 #######################################################################
 # 6. build piper_server (CUDA enabled)
