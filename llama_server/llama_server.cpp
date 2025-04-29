@@ -112,6 +112,8 @@ public:
     explicit LlamaServiceImpl(const std::string& model_path){
         int n_ctx = 2048;
         if(const char* env = std::getenv("LLAMA_N_CTX")) n_ctx = std::atoi(env);
+        if (const char* s = std::getenv("LLAMA_N_GPU_LAYERS")) mp.n_gpu_layers = std::atoi(s);
+        if (const char* s = std::getenv("LLAMA_MAIN_GPU")) mp.main_gpu = std::atoi(s); 
 
         ggml_backend_load_all();
         llama_model_params mp = llama_model_default_params();
