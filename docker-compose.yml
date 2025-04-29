@@ -55,6 +55,8 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - LLAMA_N_CTX=2048
+      - LLAMA_N_GPU_LAYERS=33
+      - GGML_CUDA_FORCE_MMQ=1          
     volumes:
       - llama-socket:/app/llama-sockets
       - ./llama_models:/app/models
