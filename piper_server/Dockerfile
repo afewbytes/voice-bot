@@ -7,8 +7,8 @@ FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 # 0. build / run-time prerequisites
 #######################################################################
 ARG DEBIAN_FRONTEND=noninteractive
-ARG CUDA_ARCHS="80;86;89"               # Ampere + Ada; override at build time
-ARG ORT_VER=1.21.1                      # tag to build from source
+ARG CUDA_ARCHS="80;86;89"
+ARG ORT_VER=1.21.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git wget pkg-config ninja-build \
@@ -60,10 +60,10 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --cuda_home=/usr/local/cuda \
         --cudnn_home=/usr/lib/x86_64-linux-gnu \
         --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} \
-        --allow_running_as_root && \        # ← ADDED
+        --allow_running_as_root && \
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
     ldconfig && \
-    cd /app && rm -rf onnxruntime            # slim the image
+    cd /app && rm -rf onnxruntime
 
 #######################################################################
 # 5. build Piper (links to the freshly-built ORT)
