@@ -62,7 +62,7 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=\"${CUDA_ARCHS}\" && \
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
     ldconfig && \
-    cd /app && rm -rf onnxruntime   # ⬅️ clean up
+    cd /app && rm -rf onnxruntime
 
 #######################################################################
 # 5. build Piper (links to the freshly-built ORT)
