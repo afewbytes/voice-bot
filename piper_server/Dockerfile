@@ -4,11 +4,11 @@
 FROM nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
 
 #######################################################################
-# 0. build/run-time prerequisites
+# 0. build / run-time prerequisites
 #######################################################################
 ARG DEBIAN_FRONTEND=noninteractive
-ARG CUDA_ARCHS="80;86;89"       # Ampere + Ada; override at build-time if needed
-ARG ORT_VER=1.21.1              # tag to build from source
+ARG CUDA_ARCHS="80;86;89"          # Ampere + Ada; override at build-time if needed
+ARG ORT_VER=1.21.1                 # tag to build from source
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git wget pkg-config ninja-build \
@@ -50,7 +50,8 @@ RUN protoc -I /app/proto --cpp_out=/app/proto --grpc_out=/app/proto \
 # 4. build ONNX Runtime GPU **from source**
 #######################################################################
 RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxruntime && \
-    /onnxruntime/build.sh \
+    cd onnxruntime && \            # ⬅️ enter the repo
+    ./build.sh \                   # ⬅️ run the script from there
         --config Release \
         --skip_tests \
         --parallel \
@@ -59,9 +60,9 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --cuda_home=/usr/local/cuda \
         --cudnn_home=/usr/lib/x86_64-linux-gnu \
         --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=\"${CUDA_ARCHS}\" && \
-    cp /onnxruntime/build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
+    cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
     ldconfig && \
-    rm -rf /onnxruntime   # keep the image slim
+    cd /app && rm -rf onnxruntime   # ⬅️ clean up
 
 #######################################################################
 # 5. build Piper (links to the freshly-built ORT)
