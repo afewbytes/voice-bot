@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   api:
     build:
@@ -37,7 +39,11 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - WHISPER_MODEL=kb-ggml-model.bin
-    volumes: [whisper-socket:/app/sockets]
+    volumes:
+      - whisper-socket:/app/sockets
+    ulimits:
+      memlock: -1          # allow page-locked (“pinned”) memory
+      stack:   67108864    # 64 MiB stack – CUDA’s usual default
     healthcheck:
       test: ["CMD", "test", "-S", "/app/sockets/whisper.sock"]
       interval: 2s
@@ -55,11 +61,14 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       LLAMA_N_CTX: 2048
-      LLAMA_N_GPU_LAYERS: 33
-      GGML_CUDA_FORCE_MMQ: "1" 
+      LLAMA_N_GPU_LAYERS: 32      # 32 layers in the model → 32 to GPU
+      GGML_CUDA_FORCE_MMQ: "1"
     volumes:
       - llama-socket:/app/llama-sockets
       - ./llama_models:/app/models
+    ulimits:
+      memlock: -1
+      stack:   67108864
     healthcheck:
       test: ["CMD", "test", "-S", "/app/llama-sockets/llama.sock"]
       interval: 2s
@@ -79,6 +88,9 @@ services:
     volumes:
       - piper-socket:/app/piper-sockets
       - ./piper_models:/app/models
+    ulimits:
+      memlock: -1
+      stack:   67108864
     healthcheck:
       test: ["CMD", "test", "-S", "/app/piper-sockets/piper.sock"]
       interval: 2s
@@ -89,10 +101,6 @@ services:
 
 volumes:
   whisper-socket:
-    driver: local
   llama-socket:
-    driver: local
   piper-socket:
-    driver: local
   whisper-models:
-    driver: local
