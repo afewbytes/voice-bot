@@ -11,15 +11,22 @@ ARG CUDA_ARCHS="80;86;89"
 ARG ORT_VER=1.21.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake git wget pkg-config ninja-build \
+        build-essential git wget pkg-config ninja-build \
         python3 python3-dev python3-pip \
         libgomp1 \
         libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
         libsndfile1-dev libespeak-ng-dev \
         libopus-dev libopusfile-dev libsamplerate0-dev \
         libspdlog-dev \
-    && python3 -m pip install --no-cache-dir --upgrade pip \
     && rm -rf /var/lib/apt/lists/*
+
+# ── NEWER CMAKE + psutil ────────────────────────────────────────────────────⬅️
+RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.29.0/cmake-3.29.0-linux-x86_64.tar.gz \
+ && tar -xzf cmake-3.29.0-linux-x86_64.tar.gz --strip-components=1 -C /usr/local \
+ && rm cmake-3.29.0-linux-x86_64.tar.gz \
+ && ln -sf /usr/local/bin/cmake /usr/bin/cmake \
+ && python3 -m pip install --no-cache-dir psutil
+# ────────────────────────────────────────────────────────────────────────────
 
 #######################################################################
 # 1. extra runtime libs: piper-phonemize + eSpeak-NG data
