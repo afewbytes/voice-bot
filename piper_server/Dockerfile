@@ -64,10 +64,12 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
     # copy libs and headers for system-wide use
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
     cp -r include /usr/local && \
-    # ── compat symlinks for ORT ≥1.18 header layout ──────────────────
-    ln -sf /usr/local/include/onnxruntime/onnxruntime_cxx_api.h /usr/local/include/onnxruntime_cxx_api.h && \
-    ln -sf /usr/local/include/onnxruntime/onnxruntime_c_api.h  /usr/local/include/onnxruntime_c_api.h  && \
-    # ────────────────────────────────────────────────────────────────
+    # ── create flat-compat headers for projects that still do #include <onnxruntime_*.h> ──
+    for h in onnxruntime_cxx_api.h onnxruntime_c_api.h; do \
+        real=$(find /usr/local/include -name $h | head -n1); \
+        ln -sf "${real}" "/usr/local/include/${h}"; \
+    done && \
+    # ────────────────────────────────────────────────────────────────────────────────
     ldconfig && \
     cd /app && rm -rf onnxruntime
 
