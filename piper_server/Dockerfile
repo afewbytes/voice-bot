@@ -63,7 +63,12 @@ RUN git clone --branch v${ORT_VER} --depth 1 https://github.com/microsoft/onnxru
         --allow_running_as_root && \
     # copy libs and headers for system-wide use
     cp build/Linux/Release/libonnxruntime*.so* /usr/local/lib/ && \
-    cp -r include /usr/local && ldconfig && \
+    cp -r include /usr/local && \
+    # ── compat symlinks for ORT ≥1.18 header layout ──────────────────
+    ln -sf /usr/local/include/onnxruntime/onnxruntime_cxx_api.h /usr/local/include/onnxruntime_cxx_api.h && \
+    ln -sf /usr/local/include/onnxruntime/onnxruntime_c_api.h  /usr/local/include/onnxruntime_c_api.h  && \
+    # ────────────────────────────────────────────────────────────────
+    ldconfig && \
     cd /app && rm -rf onnxruntime
 
 #######################################################################
