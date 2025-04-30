@@ -43,11 +43,12 @@ RUN mkdir -p /onnxruntime-dist/lib /onnxruntime-dist/include && \
     cp /onnxruntime-build/onnxruntime/build/Linux/Release/libonnxruntime*.so* /onnxruntime-dist/lib/ && \
     cp -r /onnxruntime-build/onnxruntime/include/* /onnxruntime-dist/include/
 
-# Create flat-compat headers for projects that still do #include <onnxruntime_*.h>
-RUN for h in onnxruntime_cxx_api.h onnxruntime_c_api.h; do \
-        real=$(find /onnxruntime-dist/include -name $h | head -n1); \
-        ln -sf "${real}" "/onnxruntime-dist/include/${h}"; \
-    done
+# -----------------------------------------------------------------------------
+# FIX: create **relative** symlinks so they remain valid after COPY to /usr/local
+# -----------------------------------------------------------------------------
+RUN cd /onnxruntime-dist/include && \
+    ln -sf onnxruntime/core/session/onnxruntime_c_api.h  onnxruntime_c_api.h  && \
+    ln -sf onnxruntime/core/session/onnxruntime_cxx_api.h onnxruntime_cxx_api.h
 
 ###############################################################################
 # Stage 2: Build piper-phonemize with the built ONNX Runtime
