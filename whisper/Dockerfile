@@ -47,26 +47,30 @@ RUN mkdir build && cd build && \
 # 2. RUNTIME STAGE
 ########################
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
-
-# -- copy server binary
+ARG DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
+
+# ── server binary ────────────────────────────────────────────────────────────
 COPY --from=build /app/build/whisper_server /app/
 
-# -- copy whisper / ggml libs
+# ── whisper / ggml DSOs (they live in the build tree) ───────────────────────
 COPY --from=build /app/build/whisper_cpp_build/src/libwhisper.so*           /usr/local/lib/
 COPY --from=build /app/build/whisper_cpp_build/ggml/src/libggml*.so*        /usr/local/lib/
 COPY --from=build /app/build/whisper_cpp_build/ggml/src/libggml-cuda*.so*   /usr/local/lib/
 
-# -- copy gRPC & Protobuf runtimes from build stage (exact matching versions)
-COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc++.so*   /usr/local/lib/
-COPY --from=build /usr/lib/x86_64-linux-gnu/libprotobuf.so* /usr/local/lib/
-COPY --from=build /usr/lib/x86_64-linux-gnu/libabsl*.so* /usr/local/lib/
-RUN ldconfig
+# ── gRPC + Protobuf + Abseil + re2 runtime libs ─────────────────────────────
+COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc*.so*   /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libgpr*.so*    /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libupb*.so*    /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libprotobuf*.so* /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libabsl*.so*     /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libre2*.so*      /usr/local/lib/
+RUN ldconfig     # make the loader cache the freshly-copied libs
 
-# -- baked-in model (remove if you mount a volume)
+# ── baked-in model (remove these two lines if you mount a volume instead) ───
 COPY --from=build /app/models /app/models
 
-# -- runtime directories
+# ── runtime directories ──────────────────────────────────────────────────────
 RUN mkdir -p /app/sockets && chmod 777 /app/sockets
 
 CMD ["/app/whisper_server"]
