@@ -9,7 +9,7 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
 ARG CUDA_ARCHS="89"                     # Ada-Lovelace (RTX 4000 SFF Ada)
 ARG DEBIAN_FRONTEND=noninteractive
 
-# ── development tool-chain & headers ────────────────────────────────────────
+# ── development tool-chain & headers ─────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git wget pkg-config \
         libgomp1 \
@@ -18,36 +18,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-# ── clone whisper.cpp ───────────────────────────────────────────────────────
+
+# ── clone whisper.cpp (CUDA-enabled) ─────────────────────────────────────────
 RUN git clone --depth 1 --branch v1.7.5 https://github.com/ggml-org/whisper.cpp.git
 
-# ── server sources & proto schema ───────────────────────────────────────────
+# ── server sources & proto schema ────────────────────────────────────────────
 COPY whisper/ /app/
 COPY proto/   /app/proto/
 RUN protoc -Iproto --cpp_out=proto --grpc_out=proto \
       --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) proto/voice.proto
 
-# ── link-time CUDA stubs (libcuda.so → stubs) ───────────────────────────────
+# ── link-time CUDA stubs (libcuda.so → stubs) ────────────────────────────────
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so && \
     ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so.1
 
-# ── optional: bake a Swedish base model into the image ──────────────────────
+# ── optionally bake a Swedish Whisper model into the image ──────────────────
 RUN mkdir -p /app/models && \
     wget -q -O /app/models/kb-ggml-model.bin \
          https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
 
-# ── configure & build ───────────────────────────────────────────────────────
+# ── configure & build ────────────────────────────────────────────────────────
 RUN mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
              -DGGML_CUDA=ON \
              -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
     make -j"$(nproc)"
 
-# ── collect every shared object that whisper_server depends on ──────────────
+# ── collect **all** shared objects the runtime will need ‒ flat in /deps ─────
+#  • whisper / ggml DSOs the linker produced
+#  • every library reported by ldd
 RUN mkdir /deps && \
-    ldd /app/build/whisper_server \
-      | awk '/=> \// {print $3}' \
-      | xargs -I{} cp --parents -v {} /deps
+    cp /app/build/whisper_cpp_build/src/libwhisper.so*            /deps/ && \
+    cp /app/build/whisper_cpp_build/ggml/src/libggml*.so*         /deps/ && \
+    cp /app/build/whisper_cpp_build/ggml/src/libggml-cuda*.so*    /deps/ && \
+    ldd /app/build/whisper_server | awk '/=> \// {print $3}' \
+      | xargs -I{} cp -v {} /deps/
 
 ########################
 # 2. RUNTIME STAGE
@@ -56,17 +61,17 @@ FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 ARG DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
-# ── server binary ───────────────────────────────────────────────────────────
+# ── server binary ────────────────────────────────────────────────────────────
 COPY --from=build /app/build/whisper_server /app/
 
-# ── all runtime libraries automatically discovered with ldd ─────────────────
+# ── drop every required DSO straight into /usr/local/lib ─────────────────────
 COPY --from=build /deps/ /usr/local/lib/
-RUN ldconfig            # refresh the loader cache
+RUN ldconfig          # refresh loader cache so it sees the new libs
 
-# ── baked-in model (delete these two lines if you mount a volume instead) ──
+# ── baked-in model (remove if you mount a volume instead) ────────────────────
 COPY --from=build /app/models /app/models
 
-# ── runtime directories ─────────────────────────────────────────────────────
+# ── runtime directories ──────────────────────────────────────────────────────
 RUN mkdir -p /app/sockets && chmod 777 /app/sockets
 
 CMD ["/app/whisper_server"]
