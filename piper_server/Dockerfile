@@ -110,12 +110,13 @@ COPY --from=onnxruntime-builder /onnxruntime-dist /usr/local
 COPY --from=phonemize-builder /phonemize-dist /usr/local
 
 # Install runtime dependencies
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git wget pkg-config ninja-build \
         python3 python3-dev python3-pip \
         libgomp1 \
         libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
-        libsndfile1-dev libespeak-ng-dev \
+        libsndfile1-dev libespeak-ng-dev libespeak-ng-data \
         libopus-dev libopusfile-dev libsamplerate0-dev \
         libspdlog-dev libfmt-dev \
         g++-12 && \
