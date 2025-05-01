@@ -110,7 +110,6 @@ COPY --from=onnxruntime-builder /onnxruntime-dist /usr/local
 COPY --from=phonemize-builder /phonemize-dist /usr/local
 
 # Install runtime dependencies
-# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git wget pkg-config ninja-build \
         python3 python3-dev python3-pip \
@@ -120,8 +119,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libopus-dev libopusfile-dev libsamplerate0-dev \
         libspdlog-dev libfmt-dev \
         g++-12 && \
-    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 60 \
-                        --slave /usr/bin/g++ g++ /usr/bin/g++-12 && \
+    # ----------------------------  ONE-LINE FIX  ----------------------- #
+    ln -s /usr/lib/x86_64-linux-gnu/espeak-ng-data /usr/share/espeak-ng-data && \
+    # --------------------------------------------------------------------- #
     rm -rf /var/lib/apt/lists/* && \
     ldconfig
 
