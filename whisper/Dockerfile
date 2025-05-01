@@ -6,10 +6,10 @@
 # 1. BUILD STAGE
 ########################
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
-ARG CUDA_ARCHS="89"                     # Ada Lovelace (RTX 4000 SFF Ada)
+ARG CUDA_ARCHS="89"                     # Ada-Lovelace (RTX 4000 SFF Ada)
 ARG DEBIAN_FRONTEND=noninteractive
 
-# ── development tool-chain & headers ─────────────────────────────────────────
+# ── development tool-chain & headers ────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git wget pkg-config \
         libgomp1 \
@@ -18,30 +18,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-# ── clone whisper.cpp ────────────────────────────────────────────────────────
+# ── clone whisper.cpp ───────────────────────────────────────────────────────
 RUN git clone --depth 1 --branch v1.7.5 https://github.com/ggml-org/whisper.cpp.git
 
-# ── server sources & proto schema ────────────────────────────────────────────
+# ── server sources & proto schema ───────────────────────────────────────────
 COPY whisper/ /app/
 COPY proto/   /app/proto/
 RUN protoc -Iproto --cpp_out=proto --grpc_out=proto \
       --plugin=protoc-gen-grpc=$(which grpc_cpp_plugin) proto/voice.proto
 
-# ── link-time CUDA stub (both libcuda.so & libcuda.so.1) ─────────────────────
+# ── link-time CUDA stubs (libcuda.so → stubs) ───────────────────────────────
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so && \
     ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so.1
 
-# ── (optional) bake a Swedish base model in the image ───────────────────────
+# ── optional: bake a Swedish base model into the image ──────────────────────
 RUN mkdir -p /app/models && \
     wget -q -O /app/models/kb-ggml-model.bin \
          https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
 
-# ── configure & build ────────────────────────────────────────────────────────
+# ── configure & build ───────────────────────────────────────────────────────
 RUN mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
              -DGGML_CUDA=ON \
              -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
-    make -j$(nproc)
+    make -j"$(nproc)"
+
+# ── collect every shared object that whisper_server depends on ──────────────
+RUN mkdir /deps && \
+    ldd /app/build/whisper_server \
+      | awk '/=> \// {print $3}' \
+      | xargs -I{} cp --parents -v {} /deps
 
 ########################
 # 2. RUNTIME STAGE
@@ -50,27 +56,17 @@ FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 ARG DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
-# ── server binary ────────────────────────────────────────────────────────────
+# ── server binary ───────────────────────────────────────────────────────────
 COPY --from=build /app/build/whisper_server /app/
 
-# ── whisper / ggml DSOs (they live in the build tree) ───────────────────────
-COPY --from=build /app/build/whisper_cpp_build/src/libwhisper.so*           /usr/local/lib/
-COPY --from=build /app/build/whisper_cpp_build/ggml/src/libggml*.so*        /usr/local/lib/
-COPY --from=build /app/build/whisper_cpp_build/ggml/src/libggml-cuda*.so*   /usr/local/lib/
+# ── all runtime libraries automatically discovered with ldd ─────────────────
+COPY --from=build /deps/ /usr/local/lib/
+RUN ldconfig            # refresh the loader cache
 
-# ── gRPC + Protobuf + Abseil + re2 runtime libs ─────────────────────────────
-COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc*.so*   /usr/local/lib/
-COPY --from=build /usr/lib/x86_64-linux-gnu/libgpr*.so*    /usr/local/lib/
-COPY --from=build /usr/lib/x86_64-linux-gnu/libupb*.so*    /usr/local/lib/
-COPY --from=build /usr/lib/x86_64-linux-gnu/libprotobuf*.so* /usr/local/lib/
-COPY --from=build /usr/lib/x86_64-linux-gnu/libabsl*.so*     /usr/local/lib/
-COPY --from=build /usr/lib/x86_64-linux-gnu/libre2*.so*      /usr/local/lib/
-RUN ldconfig     # make the loader cache the freshly-copied libs
-
-# ── baked-in model (remove these two lines if you mount a volume instead) ───
+# ── baked-in model (delete these two lines if you mount a volume instead) ──
 COPY --from=build /app/models /app/models
 
-# ── runtime directories ──────────────────────────────────────────────────────
+# ── runtime directories ─────────────────────────────────────────────────────
 RUN mkdir -p /app/sockets && chmod 777 /app/sockets
 
 CMD ["/app/whisper_server"]
