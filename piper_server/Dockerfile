@@ -49,8 +49,10 @@ RUN mkdir -p /onnxruntime-dist/lib /onnxruntime-dist/include && \
 RUN cd /onnxruntime-dist/include && \
 for h in onnxruntime_c_api.h \
           onnxruntime_cxx_api.h \
+          onnxruntime_cxx_inline.h \
           onnxruntime_float16.h \
-          onnxruntime_run_options_config_keys.h; do \
+          onnxruntime_run_options_config_keys.h \
+          onnxruntime_session_options_config_keys.h; do \
     ln -sf onnxruntime/core/session/$h $h ; \
 done
 
