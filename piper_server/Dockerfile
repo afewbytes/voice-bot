@@ -116,7 +116,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-dev python3-pip \
         libgomp1 \
         libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc \
-        libsndfile1-dev libespeak-ng-dev libespeak-ng-data \
+        libsndfile1-dev libespeak-ng-dev espeak-ng-data \
         libopus-dev libopusfile-dev libsamplerate0-dev \
         libspdlog-dev libfmt-dev \
         g++-12 && \
