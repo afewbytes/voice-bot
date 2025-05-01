@@ -60,6 +60,7 @@ COPY --from=build /app/build/whisper_cpp_build/ggml/src/libggml-cuda*.so*   /usr
 # -- copy gRPC & Protobuf runtimes from build stage (exact matching versions)
 COPY --from=build /usr/lib/x86_64-linux-gnu/libgrpc++.so*   /usr/local/lib/
 COPY --from=build /usr/lib/x86_64-linux-gnu/libprotobuf.so* /usr/local/lib/
+COPY --from=build /usr/lib/x86_64-linux-gnu/libabsl*.so* /usr/local/lib/
 RUN ldconfig
 
 # -- baked-in model (remove if you mount a volume)
