@@ -32,7 +32,7 @@ RUN protoc -Iproto --cpp_out=proto --grpc_out=proto \
 RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so && \
     ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so.1
 
-# ── optionally bake a Swedish Whisper model into the image ──────────────────
+# ── optional: bake a Swedish Whisper model into the image ────────────────────
 RUN mkdir -p /app/models && \
     wget -q -O /app/models/kb-ggml-model.bin \
          https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
@@ -44,15 +44,13 @@ RUN mkdir build && cd build && \
              -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
     make -j"$(nproc)"
 
-# ── collect **all** shared objects the runtime will need ‒ flat in /deps ─────
-#  • whisper / ggml DSOs the linker produced
-#  • every library reported by ldd
+# ── collect runtime DSOs (flat) ──────────────────────────────────────────────
 RUN mkdir /deps && \
-    cp /app/build/whisper_cpp_build/src/libwhisper.so*            /deps/ && \
-    cp /app/build/whisper_cpp_build/ggml/src/libggml*.so*         /deps/ && \
-    cp /app/build/whisper_cpp_build/ggml/src/libggml-cuda*.so*    /deps/ && \
+    # 1) everything built by whisper.cpp / ggml (whatever the names are)
+    find /app/build -maxdepth 3 -type f -name '*.so*' -exec cp -v {} /deps/ \; && \
+    # 2) every library ldd says whisper_server will need
     ldd /app/build/whisper_server | awk '/=> \// {print $3}' \
-      | xargs -I{} cp -v {} /deps/
+      | xargs -r -I{} cp -v {} /deps/
 
 ########################
 # 2. RUNTIME STAGE
@@ -64,9 +62,9 @@ WORKDIR /app
 # ── server binary ────────────────────────────────────────────────────────────
 COPY --from=build /app/build/whisper_server /app/
 
-# ── drop every required DSO straight into /usr/local/lib ─────────────────────
+# ── all required DSOs straight into /usr/local/lib ───────────────────────────
 COPY --from=build /deps/ /usr/local/lib/
-RUN ldconfig          # refresh loader cache so it sees the new libs
+RUN ldconfig                # refresh loader cache
 
 # ── baked-in model (remove if you mount a volume instead) ────────────────────
 COPY --from=build /app/models /app/models
