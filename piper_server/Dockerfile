@@ -47,8 +47,12 @@ RUN mkdir -p /onnxruntime-dist/lib /onnxruntime-dist/include && \
 # FIX: create **relative** symlinks so they remain valid after COPY to /usr/local
 # -----------------------------------------------------------------------------
 RUN cd /onnxruntime-dist/include && \
-    ln -sf onnxruntime/core/session/onnxruntime_c_api.h  onnxruntime_c_api.h  && \
-    ln -sf onnxruntime/core/session/onnxruntime_cxx_api.h onnxruntime_cxx_api.h
+for h in onnxruntime_c_api.h \
+          onnxruntime_cxx_api.h \
+          onnxruntime_float16.h \
+          onnxruntime_run_options_config_keys.h; do \
+    ln -sf onnxruntime/core/session/$h $h ; \
+done
 
 ###############################################################################
 # Stage 2: Build piper-phonemize with the built ONNX Runtime
