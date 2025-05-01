@@ -95,7 +95,7 @@ RUN git clone --depth 1 https://github.com/rhasspy/piper-phonemize.git && \
 # Organize piper-phonemize files for the next stage
 RUN mkdir -p /phonemize-dist/lib /phonemize-dist/include && \
     cp /usr/local/lib/libpiper_phonemize* /phonemize-dist/lib/ && \
-    cp -r /usr/local/include/piper_phonemize /phonemize-dist/include/
+    cp -r /usr/local/include/piper-phonemize /phonemize-dist/include/
 
 ###############################################################################
 # Stage 3: Final image - build Piper and piper_server
