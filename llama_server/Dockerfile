@@ -52,7 +52,7 @@ RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libc
       -DCMAKE_BUILD_TYPE=Release \
       -DGGML_CUDA=ON \
       -DGGML_CUDA_KQUANTS=ON \
-      -DGGML_CUDA_FORCE_MMQ=ON \
+      -DGGML_CUDA_FORCE_MMQ=ON \  
       -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS} && \
   make -j$(nproc)
 # ---- remove the stub symlinks so CUDA sees the real driver at runtime -------
@@ -66,4 +66,4 @@ RUN mkdir -p /app/llama-sockets && chmod 777 /app/llama-sockets
 # -----------------------------------------------------------------------------
 # 7. run
 # -----------------------------------------------------------------------------
-CMD ["/app/llama_server/build/llama_server", "/app/models/Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf"]
+CMD ["/app/llama_server/build/llama_server", "/app/models/Mistral-7B-v0.3.Q8_0.gguf"]

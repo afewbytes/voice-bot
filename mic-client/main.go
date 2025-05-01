@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	serverAddr       = "localhost:8090"
+	serverAddr       = "5.9.83.252:8090"
 	sampleRate       = 16000          // Input sample rate
 	framesPerBuffer  = 1048
 	channels         = 1
