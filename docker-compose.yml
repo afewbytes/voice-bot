@@ -110,7 +110,7 @@ services:
   f5-tts:
     build:
       context: .
-      dockerfile: f5_server/Dockerfile.cuda      # points to the GPU Dockerfile
+      dockerfile: f5_server/Dockerfile      # points to the GPU Dockerfile
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
