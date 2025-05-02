@@ -16,7 +16,7 @@
 #include <iomanip>  // std::setprecision
 
 static const std::string SOCKET_PATH = "/app/sockets/whisper.sock";
-static const char* MODEL_PATH        = "/app/models/kb-ggml-model.bin";
+static const char* MODEL_PATH        = "/app/models/base.en-ggml.bin";
 
 // Buffer parameters
 static const size_t MAX_AUDIO_BUFFER = 30 * 16000 * sizeof(int16_t); // 30 seconds max buffer

@@ -9,7 +9,7 @@ services:
       - whisper-socket:/app/sockets
       - llama-socket:/app/llama-sockets
       - piper-socket:/app/piper-sockets
-      - f5-socket:/app/f5-sockets                  # ➊ NEW
+      - f5-socket:/app/f5-sockets
     ports:
       - "8090:8090"
     depends_on:
@@ -17,23 +17,29 @@ services:
         condition: service_healthy
       llama:
         condition: service_started
-      piper:
-        condition: service_healthy
-      f5-tts:                                      # ➋ NEW
+      # piper:                     # old TTS – kept for reference
+      #   condition: service_healthy
+      f5-tts:
         condition: service_healthy
     restart: on-failure
+
+    # ----------------- ENTRYPOINT ----------------------------------------
+    # Piper wait-loop is *removed* from the shell script itself but kept
+    # here as YAML comments so you can reinstate it quickly if needed.
+    #
     entrypoint: >
-      /bin/sh -c "
-      echo 'Waiting for whisper socket…' &&
-      while [ ! -S /app/sockets/whisper.sock ]; do sleep 0.2; done &&
-      echo 'Waiting for llama socket…' &&
-      while [ ! -S /app/llama-sockets/llama.sock ]; do sleep 0.2; done &&
-      echo 'Waiting for piper socket…' &&
-      while [ ! -S /app/piper-sockets/piper.sock ]; do sleep 0.2; done &&
-      echo 'Waiting for F5 socket…' &&                             # ➌ NEW
-      while [ ! -S /app/f5-sockets/f5-tts.sock ]; do sleep 0.2; done &&
-      echo 'All backends ready; starting API…' &&
-      exec /app/server"
+      /bin/sh -c '
+        echo "Waiting for whisper socket…" &&
+        while [ ! -S /app/sockets/whisper.sock ]; do sleep 0.2; done &&
+        echo "Waiting for llama socket…" &&
+        while [ ! -S /app/llama-sockets/llama.sock ]; do sleep 0.2; done &&
+        # echo "Waiting for piper socket…" &&
+        # while [ ! -S /app/piper-sockets/piper.sock ]; do sleep 0.2; done &&
+        echo "Waiting for F5 socket…" &&
+        while [ ! -S /app/f5-sockets/f5-tts.sock ]; do sleep 0.2; done &&
+        echo "All backends ready; starting API…" &&
+        exec /app/server
+      '
 
   whisper:
     build:

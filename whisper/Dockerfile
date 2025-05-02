@@ -33,9 +33,13 @@ RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libc
     ln -s /usr/local/cuda/lib64/stubs/libcuda.so      /usr/local/cuda/lib64/libcuda.so.1
 
 # ── optional: bake a Swedish Whisper model into the image ────────────────────
+#RUN mkdir -p /app/models && \
+#    wget -q -O /app/models/kb-ggml-model.bin \
+#         https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
+
 RUN mkdir -p /app/models && \
-    wget -q -O /app/models/kb-ggml-model.bin \
-         https://huggingface.co/KBLab/kb-whisper-base/resolve/main/ggml-model.bin
+    wget -q -O /app/models/base.en-ggml.bin \
+         https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 
 # ── configure & build ────────────────────────────────────────────────────────
 RUN mkdir build && cd build && \

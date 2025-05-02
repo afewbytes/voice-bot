@@ -66,4 +66,4 @@ RUN mkdir -p /app/llama-sockets && chmod 777 /app/llama-sockets
 # -----------------------------------------------------------------------------
 # 7. run
 # -----------------------------------------------------------------------------
-CMD ["/app/llama_server/build/llama_server", "/app/models/Mistral-7B-v0.3.Q8_0.gguf"]
+CMD ["/app/llama_server/build/llama_server", "/app/models/Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf"]

@@ -208,7 +208,7 @@ private:
 
 // ─────────────────────────────────────────────────────────────────────────────
 int main(int argc, char** argv){
-    std::string model_path = argc>1 ? argv[1] : "/app/models/Mistral-7B-v0.3.Q8_0.gguf";
+    std::string model_path = argc>1 ? argv[1] : "/app/models/Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf";
 
     mkdir("/app/llama-sockets", 0777);
     std::string sock = "/app/llama-sockets/llama.sock";

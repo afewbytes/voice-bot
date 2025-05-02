@@ -28,7 +28,7 @@ const (
 	// piperSockPath   = "unix:///app/piper-sockets/piper.sock" // ← kept for reference
 	f5SockPath = "unix:///app/f5-sockets/f5-tts.sock" // NEW
 
-	greetingText = "Hej jag heter Gunnar, vad kan jag hjälpa dig med?"
+	greetingText = "Hello, how can I help you?"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
