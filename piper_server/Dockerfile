@@ -167,5 +167,5 @@ RUN ldconfig
 
 # Entry-point
 CMD ["/app/piper_server/build/piper_server", \
-     "/app/models/sv_SE-nst-medium.onnx", \
-     "/app/models/sv_SE-nst-medium.onnx.json"]
+     "/app/models/en_GB-alba-medium.onnx", \
+     "/app/models/en_GB-alba-medium.onnx.json"]

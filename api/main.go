@@ -25,8 +25,8 @@ const (
 	whisperSockPath = "unix:///app/sockets/whisper.sock"
 	llamaSockPath   = "unix:///app/llama-sockets/llama.sock"
 
-	// piperSockPath   = "unix:///app/piper-sockets/piper.sock" // ← kept for reference
-	f5SockPath = "unix:///app/f5-sockets/f5-tts.sock" // NEW
+	piperSockPath   = "unix:///app/piper-sockets/piper.sock" // ← kept for reference
+	//f5SockPath = "unix:///app/f5-sockets/f5-tts.sock" // NEW
 
 	greetingText = "Hello, how can I help you?"
 )
@@ -223,24 +223,24 @@ func main() {
 	}
 	defer lConn.Close()
 
-	// pConn, err := grpc.Dial(piperSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	// if err != nil {
-	//     log.Fatalf("Piper dial: %v", err)
-	// }
-	// defer pConn.Close()
-
-	f5Conn, err := grpc.Dial(f5SockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	pConn, err := grpc.Dial(piperSockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("F5-TTS dial: %v", err)
+    	log.Fatalf("Piper dial: %v", err)
 	}
-	defer f5Conn.Close()
+	defer pConn.Close()
+
+	//f5Conn, err := grpc.Dial(f5SockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	//if err != nil {
+	//	log.Fatalf("F5-TTS dial: %v", err)
+	//}
+	//defer f5Conn.Close()
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterWhisperServiceServer(grpcServer, &WhisperServiceServer{
 		whisperClient: pb.NewWhisperServiceClient(wConn),
 		llamaClient:   pb.NewLlamaServiceClient(lConn),
-		// ttsClient:     pb.NewTextToSpeechClient(pConn), // Piper   (commented)
-		ttsClient: pb.NewTextToSpeechClient(f5Conn), // F5-TTS
+		ttsClient:     pb.NewTextToSpeechClient(pConn), // Piper   (commented)
+		//ttsClient: pb.NewTextToSpeechClient(f5Conn), // F5-TTS
 	})
 
 	lis, err := net.Listen("tcp", listenAddr)
