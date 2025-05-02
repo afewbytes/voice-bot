@@ -26,28 +26,29 @@ import (
 )
 
 const (
-	serverAddr       = "5.9.83.252:8090"
+	serverAddr = "5.9.83.252:8090"
 
 	/* microphone capture */
-	micSampleRate    = 16_000
-	framesPerBuffer  = 1048
-	micChannels      = 1
-	bytesPerSample   = 2 /* int16 */
+	micSampleRate   = 16_000
+	framesPerBuffer = 1048
+	micChannels     = 1
+	bytesPerSample  = 2 /* int16 */
 
-	/* VAD parameters */
+	/* VAD parameters (now using a fixed threshold) */
 	silenceRMS       = 1200.0
 	maxSilenceFrames = 10
-	vadHoldTime      = 500  // ms
+	vadHoldTime      = 500 // ms
 	energySmoothing  = 0.7
-	minSpeechDur     = 300  // ms
+	minSpeechDur     = 300 // ms
 	preRollFrames    = 3
-	dynamicThreshold = true
+	dynamicThreshold = false // ← fixed after initial calibration
 	thresholdFactor  = 4.0
-	adaptRate        = 0.02
+	adaptRate        = 0.02  // kept, but unreachable when dynamicThreshold == false
 	initialAdapt     = 15
 )
 
-// ───────────────────────── microphone source ────────────────────────────────
+/* ───────────────────────── microphone source ───────────────────────────── */
+
 type MicSource struct {
 	stream *portaudio.Stream
 	buffer []int16
@@ -72,8 +73,7 @@ func (m *MicSource) ReadSamples(dst []int16) (int, error) {
 	if err := m.stream.Read(); err != nil {
 		return 0, err
 	}
-	n := copy(dst, m.buffer)
-	return n, nil
+	return copy(dst, m.buffer), nil
 }
 
 func (m *MicSource) Close() error {
@@ -84,13 +84,13 @@ func (m *MicSource) Close() error {
 	return m.stream.Close()
 }
 
-// ───────────────────────── audio player (PortAudio) ─────────────────────────
+/* ───────────────────────── audio player (PortAudio) ────────────────────── */
+
 type AudioPlayer struct {
 	stream      *portaudio.Stream
 	buffer      []int16
 	bufferSize  int
 	sampleRate  float64
-
 	mutex       sync.Mutex
 	audioQueue  [][]int16
 	queueSignal chan struct{}
@@ -112,7 +112,6 @@ func NewAudioPlayer() *AudioPlayer {
 }
 
 // ensureStream opens the PortAudio stream (or re-opens with a new rate)
-// called with mutex *locked*
 func (ap *AudioPlayer) ensureStream(rate float64) error {
 	if ap.stream != nil && ap.sampleRate == rate {
 		return nil
@@ -122,9 +121,7 @@ func (ap *AudioPlayer) ensureStream(rate float64) error {
 		_ = ap.stream.Close()
 		ap.stream = nil
 	}
-	s, err := portaudio.OpenDefaultStream(
-		0, 1, rate, ap.bufferSize, ap.buffer,
-	)
+	s, err := portaudio.OpenDefaultStream(0, 1, rate, ap.bufferSize, ap.buffer)
 	if err != nil {
 		return err
 	}
@@ -143,7 +140,6 @@ func (ap *AudioPlayer) EnqueueAudio(audioBytes []byte, sampleRate int32) {
 	if len(audioBytes) == 0 {
 		return
 	}
-	// bytes → int16 little-endian
 	n := len(audioBytes) / 2
 	samples := make([]int16, n)
 	for i := 0; i < n; i++ {
@@ -154,22 +150,22 @@ func (ap *AudioPlayer) EnqueueAudio(audioBytes []byte, sampleRate int32) {
 	ap.audioQueue = append(ap.audioQueue, samples)
 	if err := ap.ensureStream(float64(sampleRate)); err != nil {
 		log.Printf("audio stream open: %v", err)
-		// drop queued audio on error
 		ap.audioQueue = nil
 	}
 	ap.mutex.Unlock()
 
-	select { case ap.queueSignal <- struct{}{}: default: }
+	select {
+	case ap.queueSignal <- struct{}{}:
+	default:
+	}
 }
 
 func (ap *AudioPlayer) processAudioQueue() {
 	defer close(ap.done)
-	for {
-		<-ap.queueSignal
+	for range ap.queueSignal {
 		for {
 			ap.mutex.Lock()
 			if len(ap.audioQueue) == 0 {
-				// drain – stop stream to release the device
 				if ap.stream != nil {
 					_ = ap.stream.Stop()
 					_ = ap.stream.Close()
@@ -192,7 +188,6 @@ func (ap *AudioPlayer) processAudioQueue() {
 					end = len(chunk)
 				}
 				copy(buf, chunk[i:end])
-				// zero-pad if short
 				for j := end - i; j < size; j++ {
 					buf[j] = 0
 				}
@@ -221,7 +216,8 @@ func (ap *AudioPlayer) IsCurrentlyPlaying() bool {
 	return ap.isPlaying
 }
 
-// ───────────────────────── VAD helpers ──────────────────────────────────────
+/* ───────────────────────── VAD helpers ─────────────────────────────────── */
+
 type VADState struct {
 	active          bool
 	silentFrames    int
@@ -249,14 +245,13 @@ func (v *VADState) reset() {
 	v.lastSpeechTime = time.Time{}
 }
 
-// ───────────────────────── main ────────────────────────────────────────────
+/* ───────────────────────── main ────────────────────────────────────────── */
+
 func main() {
 	flag.Parse()
 
-	// gRPC connection to orchestrator
 	fmt.Printf("Dialing %s …\n", serverAddr)
-	conn, err := grpc.Dial(serverAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("dial: %v", err)
 	}
@@ -264,7 +259,6 @@ func main() {
 	client := pb.NewWhisperServiceClient(conn)
 	fmt.Println("Connected.")
 
-	// PortAudio global init
 	if err := portaudio.Initialize(); err != nil {
 		log.Fatalf("portaudio init: %v", err)
 	}
@@ -273,7 +267,6 @@ func main() {
 	audioPlayer := NewAudioPlayer()
 	defer audioPlayer.Close()
 
-	// microphone
 	mic, err := NewMicSource()
 	if err != nil {
 		log.Fatalf("mic: %v", err)
@@ -287,7 +280,6 @@ func main() {
 		log.Fatalf("StreamAudio: %v", err)
 	}
 
-	// SIGINT/SIGTERM → graceful shutdown
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
@@ -300,7 +292,8 @@ func main() {
 	fmt.Println("Bye.")
 }
 
-// ───────────────────────── VAD + mic → gRPC ────────────────────────────────
+/* ───────────────────────── VAD + mic → gRPC ───────────────────────────── */
+
 func processAudio(stream pb.WhisperService_StreamAudioClient,
 	source *MicSource, player *AudioPlayer, sig chan os.Signal) {
 
@@ -324,7 +317,6 @@ func processAudio(stream pb.WhisperService_StreamAudioClient,
 			}
 			return
 		default:
-			// if TTS playing, keep mic drain but ignore data
 			if player.IsCurrentlyPlaying() {
 				_, _ = source.ReadSamples(audioBuf)
 				continue
@@ -342,24 +334,20 @@ func processAudio(stream pb.WhisperService_StreamAudioClient,
 				continue
 			}
 
-			// int16 → []byte little-endian
 			sendBuf := make([]byte, framesPerBuffer*bytesPerSample)
 			for i, s := range audioBuf {
 				binary.LittleEndian.PutUint16(sendBuf[i*2:], uint16(s))
 			}
 
-			// preroll buffer
 			if vad.prerollBuffer[prerollIdx] == nil {
 				vad.prerollBuffer[prerollIdx] = make([]byte, len(sendBuf))
 			}
 			copy(vad.prerollBuffer[prerollIdx], sendBuf)
 			prerollIdx = (prerollIdx + 1) % preRollFrames
 
-			// RMS for VAD
 			rms := calcRMS(audioBuf[:n])
 			vad.lastEnergy = vad.lastEnergy*energySmoothing + rms*(1-energySmoothing)
 
-			// initial noise calibration
 			if vad.adaptationCount < initialAdapt {
 				vad.adaptationCount++
 				vad.noiseFloor = (vad.noiseFloor*float64(vad.adaptationCount-1) + rms) /
@@ -370,10 +358,6 @@ func processAudio(stream pb.WhisperService_StreamAudioClient,
 						vad.noiseFloor, vad.threshold)
 				}
 				continue
-			}
-			if dynamicThreshold && !vad.active {
-				vad.noiseFloor = vad.noiseFloor*(1-adaptRate) + rms*adaptRate
-				vad.threshold = vad.noiseFloor * thresholdFactor
 			}
 
 			fmt.Printf("\rRMS:%6.0f  Noise:%6.0f Th:%6.0f Act:%v  ",
@@ -387,7 +371,6 @@ func processAudio(stream pb.WhisperService_StreamAudioClient,
 				vad.lastSpeechTime = time.Now()
 
 				if !vad.active && vad.speechFrames >= 4 {
-					// start of speech
 					vad.active = true
 					fmt.Println("\n[Speech detected]")
 					_ = stream.Send(&pb.AudioChunk{SpeechStart: true})
@@ -401,7 +384,7 @@ func processAudio(stream pb.WhisperService_StreamAudioClient,
 				if vad.active {
 					accum = append(accum, sendBuf...)
 				}
-			} else { // silence
+			} else { /* silence */
 				vad.speechFrames = 0
 				if vad.active {
 					holdExpired := time.Since(vad.lastSpeechTime) >
@@ -426,12 +409,13 @@ func processAudio(stream pb.WhisperService_StreamAudioClient,
 						}
 						vad.reset()
 					} else if holdExpired {
+						/* quick threshold decay for abrupt cut-offs */
+						vad.threshold -= 0.5 * (vad.threshold - rms*thresholdFactor)
 						accum = append(accum, sendBuf...)
 					}
 				}
 			}
 
-			// periodic send while speaking
 			if vad.active && (len(accum) >= minSize ||
 				time.Since(lastSend) >= timeout) {
 				_ = stream.Send(&pb.AudioChunk{Data: accum})
@@ -442,7 +426,8 @@ func processAudio(stream pb.WhisperService_StreamAudioClient,
 	}
 }
 
-// ───────────────────────── orchestrator → playback ─────────────────────────
+/* ───────────────────────── orchestrator → playback ─────────────────────── */
+
 func receiveResponses(stream pb.WhisperService_StreamAudioClient,
 	player *AudioPlayer) {
 
@@ -464,7 +449,7 @@ func receiveResponses(stream pb.WhisperService_StreamAudioClient,
 			text := resp.GetText()
 			if text != "" {
 				curWhisper = text
-				fmt.Print("\r\033[K") // clear line
+				fmt.Print("\r\033[K")
 				fmt.Print("TRANSCRIPT: " + curWhisper)
 				if len(text) > 0 && text[len(text)-1] != '\n' {
 					fmt.Println()
@@ -492,7 +477,8 @@ func receiveResponses(stream pb.WhisperService_StreamAudioClient,
 	}
 }
 
-// ───────────────────────── helpers ─────────────────────────────────────────
+/* ───────────────────────── helpers ─────────────────────────────────────── */
+
 func calcRMS(buf []int16) float64 {
 	if len(buf) == 0 {
 		return 0
