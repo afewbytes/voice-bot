@@ -9,6 +9,7 @@ services:
       - whisper-socket:/app/sockets
       - llama-socket:/app/llama-sockets
       - piper-socket:/app/piper-sockets
+      - f5-socket:/app/f5-sockets                  # ➊ NEW
     ports:
       - "8090:8090"
     depends_on:
@@ -17,6 +18,8 @@ services:
       llama:
         condition: service_started
       piper:
+        condition: service_healthy
+      f5-tts:                                      # ➋ NEW
         condition: service_healthy
     restart: on-failure
     entrypoint: >
@@ -27,6 +30,8 @@ services:
       while [ ! -S /app/llama-sockets/llama.sock ]; do sleep 0.2; done &&
       echo 'Waiting for piper socket…' &&
       while [ ! -S /app/piper-sockets/piper.sock ]; do sleep 0.2; done &&
+      echo 'Waiting for F5 socket…' &&                             # ➌ NEW
+      while [ ! -S /app/f5-sockets/f5-tts.sock ]; do sleep 0.2; done &&
       echo 'All backends ready; starting API…' &&
       exec /app/server"
 
@@ -99,8 +104,32 @@ services:
       start_period: 10s
     restart: on-failure
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # NEW GPU F5-TTS SERVICE
+  # ─────────────────────────────────────────────────────────────────────────
+  f5-tts:
+    build:
+      context: .
+      dockerfile: f5_server/Dockerfile.cuda      # points to the GPU Dockerfile
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - f5-socket:/app/f5-sockets
+    ulimits:
+      memlock: -1
+      stack:   67108864
+    healthcheck:
+      test: ["CMD", "test", "-S", "/app/f5-sockets/f5-tts.sock"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: on-failure
+
 volumes:
   whisper-socket:
   llama-socket:
   piper-socket:
+  f5-socket:                                      # ➍ NEW
   whisper-models:
