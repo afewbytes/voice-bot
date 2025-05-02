@@ -8,23 +8,24 @@ $ python3 f5_tts_server.py \
 """
 from __future__ import annotations
 
-# ────────────────────────── std-lib ───────────────────────────────────────
-import argparse, asyncio, contextlib, inspect, os, time, wave
+# ────────────────────────────── std-lib ───────────────────────────────────
+import argparse, asyncio, contextlib, inspect, json, os, time, wave
 from typing import Iterable
 
-# ────────────────────────── third-party ───────────────────────────────────
+# ──────────────────────────── third-party ────────────────────────────────
 import grpc, numpy as np, torch, torchaudio
 from importlib.resources import files
 
-torch.set_float32_matmul_precision("high")      # faster matmul on Ampere/Ada
+# accelerate matmul on Ampere / Ada
+torch.set_float32_matmul_precision("high")
 
 # ─── F5-TTS import chain ─────────────────────────────────────────────────
-try:                             # ≤ 0.6.x
+try:                                    # ≤ 0.6.x release
     from f5_tts import TTS as _TTS
 except ImportError:
-    try:                         # dev layout
+    try:                                # dev tree
         from f5_tts.infer.api import TTS as _TTS
-    except ImportError:          # ≥ 1.0.0
+    except ImportError:                 # ≥ 1.0.0
         from f5_tts.api import F5TTS as _TTS
 TTS = _TTS
 
@@ -32,24 +33,31 @@ TTS = _TTS
 import voice_pb2 as pb
 import voice_pb2_grpc as pbg
 
-
-# ─────────────── debugging helper ────────────────────────────────────────
+# ─────────────────────── debug helpers ───────────────────────────────────
 def _debug_wave(wav: np.ndarray, tag: str = "wav") -> None:
-    """Print dtype / range; warn if NaN or Inf present."""
+    """Print dtype/range and first 16 samples (rounded)."""
+    head = [round(float(x), 5) for x in wav[:16]]
     print(
         f"DEBUG {tag} ▸ dtype={wav.dtype} shape={wav.shape} "
-        f"min={float(wav.min()):.4f} max={float(wav.max()):.4f}"
+        f"min={float(wav.min()):.4f} max={float(wav.max()):.4f} "
+        f"head={json.dumps(head)}"
     )
     if np.isnan(wav).any() or np.isinf(wav).any():
         print("⚠️  NaNs/Infs detected – try fp32 or CPU execution.")
 
+def _write_wav(path: str, pcm: bytes, sr: int) -> None:
+    """Write raw int16 PCM bytes to `path` using the std-lib wave module."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with contextlib.closing(wave.open(path, "wb")) as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)              # int16
+        wf.setframerate(sr)
+        wf.writeframes(pcm)
 
-# ─────────────── helpers ─────────────────────────────────────────────────
+# ────────────────────────── helpers ──────────────────────────────────────
 def resample(wav: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
     return wav if from_sr == to_sr else torchaudio.functional.resample(
-        torch.from_numpy(wav), from_sr, to_sr
-    ).numpy()
-
+        torch.from_numpy(wav), from_sr, to_sr).numpy()
 
 def _model_sr(engine) -> int:
     for root in (getattr(engine, n, None) for n in ("hps", "cfg")):
@@ -60,78 +68,78 @@ def _model_sr(engine) -> int:
     voc = getattr(engine, "vocoder", None)
     if voc and hasattr(voc, "sample_rate"):
         return voc.sample_rate
-    return 24_000
-
+    return 24_000                                         # sensible fallback
 
 _REF_WAV = str(files("f5_tts").joinpath("infer/examples/basic/basic_ref_en.wav"))
 _REF_TXT = "some call me nature, others call me mother nature."
 
-
 def _synth(engine: TTS, text: str, *, speed: float):
-    if hasattr(engine, "tts"):                     # old API
+    """Hide legacy ↔ new API differences."""
+    if hasattr(engine, "tts"):           # old API (≤ 0.6)
         return engine.tts(text, speed=speed, use_cache=False)
 
     sig = inspect.signature(engine.infer).parameters
     args = []
-    if "ref_file" in sig:
-        args.append(_REF_WAV)
-    if "ref_text" in sig:
-        args.append(_REF_TXT)
-    if "gen_text" in sig:
-        args.append(text)
+    if "ref_file" in sig: args.append(_REF_WAV)
+    if "ref_text" in sig: args.append(_REF_TXT)
+    if "gen_text" in sig: args.append(text)
     kwargs = {"speed": speed} if "speed" in sig else {}
-    out = engine.infer(*args, **kwargs)            # new API
+    out = engine.infer(*args, **kwargs)   # new API (≥ 1.0)
     return out[0] if isinstance(out, tuple) else out
 
-
-def startup_test(engine: TTS, out_sr: int, *, dump_path: str | None = None) -> None:
+# ───────────────────────── startup self-test ─────────────────────────────
+def startup_test(engine: TTS, out_sr: int, *, dump_path: str | None = None):
     print("Running startup test … “hello”")
-    t0 = time.perf_counter()
+    t0  = time.perf_counter()
     wav = _synth(engine, "hello", speed=1.0)
     wav = resample(wav, _model_sr(engine), out_sr)
-    dt = time.perf_counter() - t0
+    dt  = time.perf_counter() - t0
     print(f"Generated {len(wav)} samples in {dt:.2f}s (RTF {dt/(len(wav)/out_sr):.3f})")
-
-    _debug_wave(wav, "startup_test")               # ← NEW
+    _debug_wave(wav, "startup_test")
 
     if dump_path and os.getenv("TTS_DUMP_WAV", "1") != "0":
+        # ❶ original head-room (what the server will actually stream)
         pcm = np.clip(wav * 32_767, -32_768, 32_767).astype(np.int16).tobytes()
-        os.makedirs(os.path.dirname(dump_path), exist_ok=True)
-        with contextlib.closing(wave.open(dump_path, "wb")) as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(out_sr)
-            wf.writeframes(pcm)
-        print(f"✎  Wrote warm-up audio → {dump_path}")
+        _write_wav(dump_path, pcm, out_sr)
 
+        # ❷ peak-normalised version for quick listening
+        peak = np.max(np.abs(wav))
+        if peak > 0:
+            pcm_norm = (wav / peak * 32_767).astype(np.int16).tobytes()
+            _write_wav(dump_path.replace(".wav", "_norm.wav"), pcm_norm, out_sr)
 
-# ─────────────── gRPC service ────────────────────────────────────────────
+        print(f"✎  Wrote warm-up audio → {dump_path} (+ _norm.wav)")
+
+# ─────────────────────── gRPC service impl. ──────────────────────────────
 class TextToSpeechService(pbg.TextToSpeechServicer):
     def __init__(self, engine: TTS, out_sr: int, page: int = 4096):
         self.engine, self.out_sr, self.page = engine, out_sr, page
         self.model_sr = _model_sr(engine)
 
+    # sync generator
     def _synth_iter(self, text: str, rate: float) -> Iterable[pb.AudioResponse]:
         if not text.strip():
             return
         wav = _synth(self.engine, text, speed=rate or 1.0)
         wav = resample(wav, self.model_sr, self.out_sr)
-        _debug_wave(wav, "request")                # ← NEW
+        _debug_wave(wav, "request")
 
-        if wav.ndim == 2:
+        if wav.ndim == 2:                       # force mono
             wav = wav.mean(axis=0) if wav.shape[0] == 2 else wav.squeeze()
 
         pcm = np.clip(wav * 32_767, -32_768, 32_767).astype(np.int16).tobytes()
         for off in range(0, len(pcm), self.page):
             yield pb.AudioResponse(
-                audio_chunk=pcm[off : off + self.page],
-                sample_rate=self.out_sr,
-                is_end=off + self.page >= len(pcm),
+                audio_chunk = pcm[off:off+self.page],
+                sample_rate = self.out_sr,
+                is_end      = off + self.page >= len(pcm),
             )
 
+    # async façade
     async def _asend(self, req: pb.TextRequest):
         loop = asyncio.get_running_loop()
-        for r in await loop.run_in_executor(None, lambda: list(self._synth_iter(req.text, req.speaking_rate))):
+        for r in await loop.run_in_executor(
+                None, lambda: list(self._synth_iter(req.text, req.speaking_rate))):
             yield r
 
     async def SynthesizeText(self, request, context):
@@ -143,40 +151,43 @@ class TextToSpeechService(pbg.TextToSpeechServicer):
             async for r in self._asend(req):
                 yield r
 
-
-# ─────────────── bootstrap ───────────────────────────────────────────────
+# ───────────────────────── bootstrap ─────────────────────────────────────
 def args_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", required=True)
-    p.add_argument("--socket", required=True)
-    p.add_argument("--vocab", required=True)
+    p.add_argument("--socket",     required=True)
+    p.add_argument("--vocab",      required=True)
     p.add_argument("--device", default="cuda", choices=["cpu", "cuda", "mps"])
-    p.add_argument("--out_sr", type=int, default=22_050)
+    p.add_argument("--out_sr",  type=int, default=22_050)
     p.add_argument("--threads", type=int, default=os.cpu_count())
     return p
 
-
 def _load_engine(a) -> TTS:
+    """Pick the right constructor signature automatically."""
     if "ckpt_file" in inspect.signature(TTS).parameters:
-        ckpt = next((os.path.join(a.checkpoint, f) for f in os.listdir(a.checkpoint) if f.endswith(".safetensors")), a.checkpoint) if os.path.isdir(a.checkpoint) else a.checkpoint
+        ckpt = (next((os.path.join(a.checkpoint, f)
+                      for f in os.listdir(a.checkpoint)
+                      if f.endswith(".safetensors")), a.checkpoint)
+                if os.path.isdir(a.checkpoint) else a.checkpoint)
         print(f"Using new F5-TTS API (ckpt_file={ckpt})")
         return TTS(ckpt_file=ckpt, vocab_file=a.vocab, device=a.device)
 
     print(f"Using legacy F5-TTS API (checkpoint dir={a.checkpoint})")
-    return TTS(a.checkpoint, vocab_file=a.vocab, device=a.device, dtype="fp32" if a.device == "cpu" else "float16")
-
+    return TTS(a.checkpoint, vocab_file=a.vocab, device=a.device,
+               dtype="fp32" if a.device == "cpu" else "float16")
 
 async def serve(a):
     os.environ["OMP_NUM_THREADS"] = os.environ["MKL_NUM_THREADS"] = str(a.threads)
     print(f"Loading F5-TTS on {a.device} …")
     engine = _load_engine(a)
 
+    # set up UNIX socket early for health-checks
     if os.path.exists(a.socket):
         os.unlink(a.socket)
 
     server = grpc.aio.server()
     pbg.add_TextToSpeechServicer_to_server(TextToSpeechService(engine, a.out_sr), server)
-    server.add_insecure_port(f"unix://{a.socket}")
+    server.add_insecure_port(f'unix://{a.socket}')
     await server.start()
     os.chmod(a.socket, 0o777)
     open(os.path.join(os.path.dirname(a.socket), "ready"), "w").close()
@@ -186,13 +197,11 @@ async def serve(a):
     asyncio.create_task(asyncio.to_thread(startup_test, engine, a.out_sr, dump_path=test_wav))
     await server.wait_for_termination()
 
-
 def main() -> None:
     try:
         asyncio.run(serve(args_parser().parse_args()))
     except KeyboardInterrupt:
         pass
-
 
 if __name__ == "__main__":
     main()
